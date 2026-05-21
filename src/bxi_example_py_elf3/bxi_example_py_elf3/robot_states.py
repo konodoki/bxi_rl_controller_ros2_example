@@ -9,7 +9,7 @@ from ament_index_python.packages import get_package_share_path
 from bxi_example_py_elf3.robot_state_base import MotorFrame, RobotControlState
 from bxi_example_py_elf3.state_machine import StateBehavior, TransitionProfile
 from bxi_example_py_elf3.utils.tfs import quaternion_to_euler_array
-
+from geometry_msgs.msg import Twist
 if TYPE_CHECKING:
     from bxi_example_py_elf3.bxi_example_demo import BxiExample
 else:
@@ -20,7 +20,22 @@ class NormalState(RobotControlState):
     def __init__(self, name, state_id):
         super().__init__(name, state_id)
         self.nav_ctrl = False
+        self.nav_msg = Twist()
         
+    def on_bind(self, ctx):
+        self.nav_sub = ctx.create_subscription(Twist,"cme_vel",self.nav_vel_callback,10)
+    
+    def nav_vel_callback(self, msg: Twist):
+        self.nav_msg = msg
+    
+    def get_cmd_vel(self, ctx):
+        cmd = super().get_cmd_vel(ctx).copy()
+        cmd[0] = self.nav_msg.linear.x
+        cmd[1] = self.nav_msg.linear.y
+        cmd[2] = self.nav_msg.angular.z
+        ctx.current_cmd_vel[:] = cmd
+        return cmd
+    
     def on_prepare_enter(
         self,
         ctx: BxiExample,
