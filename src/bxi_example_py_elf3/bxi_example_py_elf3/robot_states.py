@@ -23,18 +23,17 @@ class NormalState(RobotControlState):
         self.nav_msg = Twist()
         
     def on_bind(self, ctx):
-        self.nav_sub = ctx.create_subscription(Twist,"cme_vel",self.nav_vel_callback,10)
+        self.nav_sub = ctx.create_subscription(Twist,"cmd_vel",self.nav_vel_callback,10)
     
     def nav_vel_callback(self, msg: Twist):
         self.nav_msg = msg
     
-    def get_cmd_vel(self, ctx):
-        cmd = super().get_cmd_vel(ctx).copy()
-        cmd[0] = self.nav_msg.linear.x
-        cmd[1] = self.nav_msg.linear.y
-        cmd[2] = self.nav_msg.angular.z
-        ctx.current_cmd_vel[:] = cmd
-        return cmd
+    def process_cmd_vel(self, ctx, cmd_vel):
+        if self.nav_ctrl:
+            cmd_vel[0] = self.nav_msg.linear.x
+            cmd_vel[1] = self.nav_msg.linear.y
+            cmd_vel[2] = self.nav_msg.angular.z
+            return cmd_vel
     
     def on_prepare_enter(
         self,
