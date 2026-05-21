@@ -204,6 +204,14 @@ outputs:
         - released: trigger.left_event
         - released: trigger.right_event
 
+    - output: btn_9=2
+      when:
+        - button.east_event
+        - released: shoulder.left_event
+        - released: shoulder.right_event
+        - released: trigger.left_event
+        - released: trigger.right_event
+
     - output: btn_10=1
       when:
         any:

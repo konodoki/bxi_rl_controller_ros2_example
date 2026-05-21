@@ -17,6 +17,10 @@ else:
 
 
 class NormalState(RobotControlState):
+    def __init__(self, name, state_id):
+        super().__init__(name, state_id)
+        self.nav_ctrl = False
+        
     def on_prepare_enter(
         self,
         ctx: BxiExample,
@@ -58,6 +62,13 @@ class NormalState(RobotControlState):
         frame = self.get_motor_frame(ctx, dt)
         if frame is not None:
             ctx.set_motor_target(*frame)
+    
+    def on_action(self, ctx, action_name):
+        if action_name != "toggle_nav_ctrl":
+            return False
+
+        self.nav_ctrl = not self.nav_ctrl
+        return True
 
 
 class ZeroTorqueState(RobotControlState):
