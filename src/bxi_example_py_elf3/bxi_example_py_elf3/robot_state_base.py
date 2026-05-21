@@ -21,6 +21,9 @@ class RobotControlState(StateBehavior[BxiExample]):
         self._missing_speed_profile_warned = False
         self._cmd_vel_buffer = np.zeros(3, dtype=np.float32)
 
+    def on_bind(self, ctx: BxiExample) -> None:
+        """Called once after the state is created and before the state machine starts."""
+
     def on_exit(self, ctx: BxiExample) -> None:
         ctx.pos_last_state = ctx.qpos.copy()
         ctx.kp_last_state = ctx.kp_last.copy()
