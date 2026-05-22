@@ -206,7 +206,7 @@ outputs:
 
     - output: btn_9=2
       when:
-        - button.east_event
+        - button.b_event
         - released: shoulder.left_event
         - released: shoulder.right_event
         - released: trigger.left_event
