@@ -81,9 +81,9 @@ class RobotControlState(StateBehavior[BxiExample]):
         """
         return None
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(self, ctx: BxiExample, dt: float, on_translation: bool) -> Optional[MotorFrame]:
         """
-        获取当前给机器人的帧，当处于过渡状态时dt=0，正常运行时dt应该等于推理定时器的值。
+        获取当前给机器人的帧，on_translation为True的话，机器人处于模型的过渡中。此时建议播放暂停，仅推理来保持平衡
         """
         return None
 
@@ -167,7 +167,8 @@ class RobotControlState(StateBehavior[BxiExample]):
         role: str,
         transition: TransitionProfile,
     ) -> Optional[MotorFrame]:
-        return self.get_motor_frame(ctx, 0)
+        dt = float(getattr(ctx, "dt", 0.0))
+        return self.get_motor_frame(ctx, dt,True)
 
     def on_transition_runtime_enter(
         self,
@@ -177,7 +178,7 @@ class RobotControlState(StateBehavior[BxiExample]):
         self.on_enter(ctx)
 
     def on_update(self, ctx: BxiExample, dt: float) -> None:
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt,False)
         if frame is None:
             return
         ctx.set_motor_target(*frame)

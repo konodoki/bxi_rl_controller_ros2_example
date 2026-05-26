@@ -53,7 +53,9 @@ class NormalState(RobotControlState):
             ctx.normal.target_dof_pos, ctx.normal.kps, ctx.normal.kds
         )
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         cmd_vel = self.get_cmd_vel(ctx)
         qpos, vel = ctx.normal.inference_step(
             ctx.current_q,
@@ -70,7 +72,7 @@ class NormalState(RobotControlState):
             ctx.request_state("zero_torque", trigger="safety")
             return
 
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
     
@@ -90,7 +92,9 @@ class ZeroTorqueState(RobotControlState):
             np.zeros(ctx.dof_num, dtype=np.float32),
         )
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         return self._motor_frame(
             ctx.joint_nominal_pos,
             np.zeros(ctx.dof_num, dtype=np.float32),
@@ -102,7 +106,9 @@ class PdBrakeState(RobotControlState):
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
         return self._motor_frame(ctx.pd_pos, ctx.normal.kps, ctx.normal.kds)
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         return self._motor_frame(ctx.pd_pos, ctx.normal.kps, ctx.normal.kds)
 
 
@@ -110,7 +116,9 @@ class InitialPosState(RobotControlState):
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
         return self._motor_frame(ctx.initial_pos, ctx.joint_kp, ctx.joint_kd)
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         return self._motor_frame(ctx.initial_pos, ctx.joint_kp, ctx.joint_kd)
 
 
@@ -143,7 +151,9 @@ class DanceState(RobotControlState):
             ctx.dance.kds,
         )
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         if ctx.dance.timestep >= ctx.dance.motionpos.shape[0]:
             return None
 
@@ -183,7 +193,7 @@ class DanceState(RobotControlState):
             ctx.request_state("zero_torque", trigger="safety")
             return
 
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
 
@@ -241,7 +251,9 @@ class MotionState(RobotControlState):
             return None
         return self._motor_frame(qpos, policy.kps, policy.kds)
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         policy = self._policy(ctx)
 
         qpos = policy.inference_step(
@@ -251,7 +263,7 @@ class MotionState(RobotControlState):
             ctx.current_omega,
         )
 
-        if self.playing:
+        if self.playing and not on_translation:
             policy.timestep += 50 * dt  # 模型动画是50hz播放的，dt是推理间隔
 
         return self._motor_frame(qpos, policy.kps, policy.kds)
@@ -259,7 +271,7 @@ class MotionState(RobotControlState):
     def on_update(self, ctx: BxiExample, dt: float) -> None:
         policy = self._policy(ctx)
 
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
 
@@ -365,7 +377,7 @@ class HandPlayBackState(RobotControlState):
         qpos[-14:] = self.applause_data[0]
         return self._motor_frame(qpos, ctx.withoutarm.kps, ctx.withoutarm.kds)
 
-    def get_motor_frame(self, ctx, dt):
+    def get_motor_frame(self, ctx, dt, on_translation):
         cmd_vel = self.get_cmd_vel(ctx)
         qpos, vel = ctx.withoutarm.inference_step(
             ctx.current_q,
@@ -378,7 +390,7 @@ class HandPlayBackState(RobotControlState):
             qpos[-14:] = self.applause_data[int(self.frame)]
         else:
             qpos[-14:] = self.applause_data[-1]
-        if self.playing:
+        if self.playing and not on_translation:
             self.frame += self.fps * dt
         return self._motor_frame(qpos, ctx.withoutarm.kps, ctx.withoutarm.kds)
 
@@ -396,7 +408,7 @@ class HandPlayBackState(RobotControlState):
                 },
             )
             return
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
 
@@ -442,7 +454,9 @@ class HelloState(RobotControlState):
         qpos[25] = -0.3
         return self._motor_frame(qpos, ctx.withoutarm.kps, ctx.withoutarm.kds)
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         if self.shaketime < 50:
             self.kp = self.shaketime / 50 * ctx.withoutarm.kps
         cmd_vel = self.get_cmd_vel(ctx)
@@ -464,7 +478,7 @@ class HelloState(RobotControlState):
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):
             ctx.request_state("zero_torque", trigger="safety")
             return
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
 
@@ -534,7 +548,9 @@ class RecoverState(RobotControlState):
             ctx.recover.target_dof_pos, ctx.recover.kps, ctx.recover.kds
         )
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         if ctx.recover.timestep > ctx.recover.end_frame:
             return None
 
@@ -562,7 +578,7 @@ class RecoverState(RobotControlState):
             )
             return
 
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
 
@@ -607,7 +623,9 @@ class AmpRunState(RobotControlState):
         self.pre_cmd_vel_run = self.cmd_vel_run.copy()
         return self.cmd_vel_run
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         cmd_vel = self.get_cmd_vel(ctx)
         qpos, vel = ctx.amp_run.inference_step(
             ctx.current_q,
@@ -632,7 +650,7 @@ class AmpRunState(RobotControlState):
             ctx.request_state("zero_torque", trigger="safety")
             return
 
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
 
@@ -665,7 +683,9 @@ class NormalRunState(RobotControlState):
             ctx.normal_run.joint_damping,
         )
 
-    def get_motor_frame(self, ctx: BxiExample, dt: float) -> Optional[MotorFrame]:
+    def get_motor_frame(
+        self, ctx: BxiExample, dt: float, on_translation: bool
+    ) -> Optional[MotorFrame]:
         cmd_vel = self.get_cmd_vel(ctx)
         qpos = ctx.normal_run.infer_step(
             ctx.current_q,
@@ -686,6 +706,6 @@ class NormalRunState(RobotControlState):
             ctx.request_state("zero_torque", trigger="safety")
             return
 
-        frame = self.get_motor_frame(ctx, dt)
+        frame = self.get_motor_frame(ctx, dt, False)
         if frame is not None:
             ctx.set_motor_target(*frame)
