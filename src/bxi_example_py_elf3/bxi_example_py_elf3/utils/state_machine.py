@@ -62,6 +62,7 @@ class StateBehavior(Generic[CtxT]):
     def __init__(self, name: str, state_id: int):
         self.name = name
         self.state_id = state_id
+        self.label = "Unknown"
 
     def on_enter(self, ctx: CtxT) -> None:
         pass
@@ -474,6 +475,7 @@ class RobotStateMachine(Generic[CtxT]):
                     "name": state.name,
                     "id": state.state_id,
                     "behavior": state.__class__.__name__,
+                    "label": state.label
                 }
                 for state in self._states.values()
             ],
@@ -481,7 +483,7 @@ class RobotStateMachine(Generic[CtxT]):
                 name: self._profile_snapshot(profile)
                 for name, profile in self._profiles.items()
             },
-            "remote_events": list((self._config.get("remote_events", {}) or {}).keys()),
+            "remote_events": dict(self._config.get("remote_events", {}) or {}),
             "transitions": [
                 {
                     "from": from_state,
