@@ -25,7 +25,6 @@ def generate_launch_description():
                 emulate_tty=True,
                 arguments=[("__log_level:=debug")],
             ),
-
             Node(
                 package="bxi_example_py_elf3",
                 executable="bxi_example_py_elf3_demo",

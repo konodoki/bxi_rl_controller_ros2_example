@@ -52,6 +52,9 @@ remote_events:
   hello_event:
     slot: btn_10
     value: 6
+  depth_event:
+    slot: btn_10
+    value: 7
 
 #预设的一些过度方式
 transition_profiles:
@@ -163,7 +166,8 @@ states:
         hello_event:
           to: hello
           transition: dual_running_blend
-
+        depth_event:
+          to: normal_depth
   zero_torque:
     manifest:
       label: 零力矩
@@ -183,6 +187,8 @@ states:
           transition: 
             base: first_frame_switch
             enter_duration: 1.0
+        depth_event:
+          to: normal_depth
 
   pd_brake:
     manifest:
@@ -369,3 +375,21 @@ states:
             duration: 1.0
         toggle_dance_pause_event:
           action: toggle_dance_pause
+          
+  normal_depth:
+    manifest:
+      label: 深度行走
+      index: 14
+      group: Base
+      icon: waving_hand
+    behavior: NormalDepthState
+    speed_profile: normal
+    transitions:
+      on_event:
+        normal_event:
+          to: normal
+          transition: 
+            base: dual_running_blend
+            duration: 1.0
+        zero_torque_event: zero_torque
+        

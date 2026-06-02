@@ -238,6 +238,11 @@ outputs:
           - [trigger.right_event, button.a_event]
           - [keyboard.hello_event]
 
+    - output: btn_10=7
+      when:
+        any:
+          - [trigger.right_event, button.x_event]
+
 #自定义命令
 system:
   start:
