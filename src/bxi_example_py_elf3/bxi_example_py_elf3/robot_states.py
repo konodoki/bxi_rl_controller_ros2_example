@@ -181,8 +181,8 @@ class NormalDepthState(RobotControlState):
         depth_mm = np.asanyarray(self.apply_depth_filters(self.depth_frame).get_data())
         # depth_mm = np.asanyarray(self.depth_frame.get_data())
         depth_meters = depth_mm * self.depth_scale
-        # depth_meters = self.learnable_downsample(depth_meters)
-        depth_meters = cv2.resize(depth_meters, (ctx.normal_depth.height, ctx.normal_depth.width)).astype(np.float32)
+        depth_meters = self.learnable_downsample(depth_meters)
+        # depth_meters = cv2.resize(depth_meters, (ctx.normal_depth.height, ctx.normal_depth.width)).astype(np.float32)
         depth_rotated = np.rot90(depth_meters, k=-1)  # k=-1表示顺时针90度
         # depth_rotated = np.clip(depth_rotated, 0.2, 2.0)
         # print(f"shape: {depth_rotated.shape}, dtype: {depth_rotated.dtype}, range: [{depth_rotated.min()}, {depth_rotated.max()}]")
