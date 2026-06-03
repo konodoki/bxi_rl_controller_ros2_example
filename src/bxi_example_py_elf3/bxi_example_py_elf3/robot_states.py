@@ -84,18 +84,6 @@ class NormalDepthState(RobotControlState):
         depth_sensor = profile.get_device().first_depth_sensor()
         depth_sensor.set_option(rs.option.enable_auto_exposure, 1.0)
         self.depth_scale = depth_sensor.get_depth_scale()
-
-        
-    def debug_display(self,img, title="Image",scale = 1,video=None):
-        print(f"{title} - shape: {img.shape}, dtype: {img.dtype}, range: [{img.min()}, {img.max()}]")
-        height, width = img.shape[:2]
-        new_size = (width * scale, height * scale)
-        img = cv2.resize(img, new_size, interpolation=cv2.INTER_LINEAR)
-        img_normalized = (img - img.min()) / (img.max() - img.min()) * 255
-        img_uint8 = img_normalized.astype(np.uint8)
-        cv2.imshow(title, img_uint8)
-        # cv2.imwrite("/home/kkkk/depth.jpg",img_uint8)
-        cv2.waitKey(1)
     def apply_depth_filters(self,depth_frame):
         """对深度帧应用后处理滤波"""
         
@@ -130,26 +118,6 @@ class NormalDepthState(RobotControlState):
         filtered_frame = hole_filling.process(filtered_frame)
         
         return filtered_frame
-    def learnable_downsample(self,depth_meters, target_size=(64, 36)):
-        """
-        使用双三次插值 + 细节增强
-        """
-        # 双三次插值（保留边缘）
-        depth_bicubic = cv2.resize(depth_meters, target_size, interpolation=cv2.INTER_CUBIC)
-        
-        # 计算梯度信息
-        sobelx = cv2.Sobel(depth_meters, cv2.CV_64F, 1, 0, ksize=3)
-        sobely = cv2.Sobel(depth_meters, cv2.CV_64F, 0, 1, ksize=3)
-        gradient = np.sqrt(sobelx**2 + sobely**2)
-        
-        # 梯度也降采样
-        gradient_small = cv2.resize(gradient, target_size, interpolation=cv2.INTER_CUBIC)
-        
-        # 根据梯度增强细节
-        result = depth_bicubic + gradient_small * 0.1
-        
-        return np.clip(result, 0, None)
-    
     def on_prepare_enter(
         self,
         ctx: BxiExample,
@@ -185,16 +153,10 @@ class NormalDepthState(RobotControlState):
             return
         
         depth_mm = np.asanyarray(self.apply_depth_filters(self.depth_frame).get_data())
-        # depth_mm = np.asanyarray(self.depth_frame.get_data())
         depth_meters = depth_mm * self.depth_scale
-        #截取一部分保持他的宽高比
-        # depth_meters = self.learnable_downsample(depth_meters,(ctx.normal_depth.height, ctx.normal_depth.width))
         depth_meters = cv2.resize(depth_meters, (ctx.normal_depth.height, ctx.normal_depth.width)).astype(np.float32)
         depth_rotated = np.rot90(depth_meters, k=-1)  # k=-1表示顺时针90度
         depth_rotated = np.clip(depth_rotated, 0.2, 2.5)
-        # print(f"shape: {depth_rotated.shape}, dtype: {depth_rotated.dtype}, range: [{depth_rotated.min()}, {depth_rotated.max()}]")
-        self.debug_display(depth_rotated,scale=10)
-         # 修正：使用 '32FC1' 而不是 '64FC1'
         qpos = ctx.normal_depth.inference_step(
             ctx.current_q,
             ctx.current_dq,
