@@ -73,8 +73,17 @@ except ImportError as e:
     print(f"❌ Missing required library: opencv-python")
     print(f"   Please install it using: pip install opencv-python")
     exit(1)
+try:
+    from cv_bridge import CvBridge
+    print(f"✅ cvbridge found")
+except ImportError as e:
+    print(f"❌ Missing required library: cv_bridge")
+    print(f"   Please install it using: sudo apt install ros-humble-cv-bridge")
+    exit(1)
+import sensor_msgs.msg
 class NormalDepthState(RobotControlState):
     def on_bind(self, ctx):
+        self.bridge = CvBridge()
         self.pipeline = rs.pipeline()
         config = rs.config()
         config.enable_stream(rs.stream.depth, 640, 360, rs.format.z16, 30)
@@ -83,6 +92,11 @@ class NormalDepthState(RobotControlState):
         depth_sensor = profile.get_device().first_depth_sensor()
         depth_sensor.set_option(rs.option.enable_auto_exposure, 1.0)
         self.depth_scale = depth_sensor.get_depth_scale()
+        self.depth_raw_pub = ctx.create_publisher(
+            sensor_msgs.msg.Image, 
+            '/camera/depth/image_raw', 
+            10
+        )
         
     def debug_display(self,img, title="Image",scale = 1):
         print(f"{title} - shape: {img.shape}, dtype: {img.dtype}, range: [{img.min()}, {img.max()}]")
@@ -188,7 +202,11 @@ class NormalDepthState(RobotControlState):
         depth_rotated = np.clip(depth_rotated, 0.2, 2.5)
         # print(f"shape: {depth_rotated.shape}, dtype: {depth_rotated.dtype}, range: [{depth_rotated.min()}, {depth_rotated.max()}]")
         # self.debug_display(depth_rotated,scale=10)
-
+         # 修正：使用 '32FC1' 而不是 '64FC1'
+        raw_msg = self.bridge.cv2_to_imgmsg(ctx.normal_depth.depth_image_buffer.buffer[-1], encoding='32FC1')
+        raw_msg.header.stamp = ctx.get_clock().now().to_msg()
+        raw_msg.header.frame_id = 'camera_depth_optical_frame'
+        self.depth_raw_pub.publish(raw_msg)
         qpos = ctx.normal_depth.inference_step(
             ctx.current_q,
             ctx.current_dq,
