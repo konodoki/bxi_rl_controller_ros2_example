@@ -77,7 +77,7 @@ class NormalDepthState(RobotControlState):
     def on_bind(self, ctx):
         self.pipeline = rs.pipeline()
         config = rs.config()
-        config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+        config.enable_stream(rs.stream.depth, 640, 360, rs.format.z16, 30)
         self.pipeline.start(config)
         profile = self.pipeline.get_active_profile()
         depth_sensor = profile.get_device().first_depth_sensor()
@@ -105,7 +105,7 @@ class NormalDepthState(RobotControlState):
         # 2. 优化参数配置（针对空洞填充）
         
         # 降采样：降低分辨率可以提高信噪比
-        decimation.set_option(rs.option.filter_magnitude, 4)  # 改为1，保持分辨率
+        decimation.set_option(rs.option.filter_magnitude, 1)  # 改为1，保持分辨率
         
         # 空间滤波：关键参数调整
         spatial.set_option(rs.option.filter_smooth_alpha, 0.8)      # 提高平滑度
@@ -127,7 +127,7 @@ class NormalDepthState(RobotControlState):
         filtered_frame = hole_filling.process(filtered_frame)
         
         return filtered_frame
-    def learnable_downsample(self,depth_meters, target_size=(64, 32)):
+    def learnable_downsample(self,depth_meters, target_size=(64, 36)):
         """
         使用双三次插值 + 细节增强
         """
@@ -181,11 +181,13 @@ class NormalDepthState(RobotControlState):
         depth_mm = np.asanyarray(self.apply_depth_filters(self.depth_frame).get_data())
         # depth_mm = np.asanyarray(self.depth_frame.get_data())
         depth_meters = depth_mm * self.depth_scale
-        depth_meters = self.learnable_downsample(depth_meters)
-        # depth_meters = cv2.resize(depth_meters, (ctx.normal_depth.height, ctx.normal_depth.width)).astype(np.float32)
+        #截取一部分保持他的宽高比
+        # depth_meters = self.learnable_downsample(depth_meters,(ctx.normal_depth.height, ctx.normal_depth.width))
+        depth_meters = cv2.resize(depth_meters, (ctx.normal_depth.height, ctx.normal_depth.width)).astype(np.float32)
         depth_rotated = np.rot90(depth_meters, k=-1)  # k=-1表示顺时针90度
-        # depth_rotated = np.clip(depth_rotated, 0.2, 2.0)
+        depth_rotated = np.clip(depth_rotated, 0.2, 2.5)
         # print(f"shape: {depth_rotated.shape}, dtype: {depth_rotated.dtype}, range: [{depth_rotated.min()}, {depth_rotated.max()}]")
+        self.debug_display(depth_rotated,scale=10)
 
         qpos = ctx.normal_depth.inference_step(
             ctx.current_q,
