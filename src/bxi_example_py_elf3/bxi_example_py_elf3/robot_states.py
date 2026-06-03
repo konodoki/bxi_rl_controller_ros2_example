@@ -187,7 +187,7 @@ class NormalDepthState(RobotControlState):
         depth_rotated = np.rot90(depth_meters, k=-1)  # k=-1表示顺时针90度
         depth_rotated = np.clip(depth_rotated, 0.2, 2.5)
         # print(f"shape: {depth_rotated.shape}, dtype: {depth_rotated.dtype}, range: [{depth_rotated.min()}, {depth_rotated.max()}]")
-        self.debug_display(depth_rotated,scale=10)
+        # self.debug_display(depth_rotated,scale=10)
 
         qpos = ctx.normal_depth.inference_step(
             ctx.current_q,
