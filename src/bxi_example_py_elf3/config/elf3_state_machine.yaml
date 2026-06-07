@@ -238,10 +238,10 @@ states:
         - [0, 1036]
         - [1036, 1800]
         - [1800, 2800]
-        - [2810, 3800]
+        - [2800, 3800]
         - [3800, 4800]
         - [4800, 5800]
-      segment_indices: [3, 4, 5, 3, 4, 5]
+      segment_indices: [2, 3, 4, 5, 4, 5]
       ble_mac: "E0:72:A1:D8:39:8E"
       ble_characteristic_address: "0000ee01-0000-1000-8000-00805f9b34fb"
       ble_trigger_frames: [100, 500, 800]
