@@ -1,7 +1,11 @@
+import asyncio
 import math
 import os
 import pickle
-from typing import TYPE_CHECKING, Any, Optional
+import queue
+import threading
+import time
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import numpy as np
 
@@ -14,6 +18,289 @@ if TYPE_CHECKING:
     from bxi_example_py_elf3.bxi_example_demo import BxiExample
 else:
     BxiExample = Any
+
+
+class _BleGattWriter:
+    def __init__(
+        self,
+        address: str,
+        characteristic: str,
+        payload: bytes,
+        write_with_response: bool,
+        logger: Optional[Callable[[str, str], None]] = None,
+        connect_timeout: float = 10.0,
+        reconnect_delay: float = 1.0,
+    ):
+        self.address = address
+        self.characteristic = characteristic
+        self.payload = payload
+        self.write_with_response = write_with_response
+        self.connect_timeout = connect_timeout
+        self.reconnect_delay = reconnect_delay
+        self._logger = logger
+        self._queue: "queue.Queue[Optional[bytes]]" = queue.Queue(maxsize=32)
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._last_log_at: dict[str, float] = {}
+
+    def start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            return
+        if self._stop_event.is_set():
+            return
+
+        self._thread = threading.Thread(
+            target=self._thread_main,
+            name=f"ble-gatt-writer-{self.address}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        try:
+            self._queue.put_nowait(None)
+        except queue.Full:
+            pass
+
+    def write(self) -> bool:
+        if self._stop_event.is_set():
+            return False
+
+        if self._thread is None or not self._thread.is_alive():
+            self.start()
+
+        try:
+            self._queue.put_nowait(self.payload)
+            return True
+        except queue.Full:
+            self._log_throttled(
+                "queue_full",
+                "warning",
+                "BLE write queue is full, dropping payload",
+            )
+            return False
+
+    def _thread_main(self) -> None:
+        try:
+            asyncio.run(self._run())
+        except Exception as exc:
+            self._log("warning", f"BLE writer stopped: {exc}")
+
+    async def _run(self) -> None:
+        try:
+            from bleak import BleakClient
+        except Exception as exc:
+            self._log("warning", f"BLE disabled, cannot import bleak: {exc}")
+            self._stop_event.set()
+            return
+
+        client = BleakClient(self.address, timeout=self.connect_timeout)
+        pending: Optional[bytes] = None
+
+        try:
+            while not self._stop_event.is_set():
+                if not getattr(client, "is_connected", False):
+                    if not await self._ensure_connected(client):
+                        await asyncio.sleep(self.reconnect_delay)
+                        continue
+
+                if pending is None:
+                    try:
+                        pending = await asyncio.to_thread(
+                            self._queue.get, True, 0.1
+                        )
+                    except queue.Empty:
+                        continue
+
+                if pending is None:
+                    break
+
+                if self._stop_event.is_set():
+                    break
+
+                try:
+                    await client.write_gatt_char(
+                        self.characteristic,
+                        pending,
+                        response=self.write_with_response,
+                    )
+                    pending = None
+                except Exception as exc:
+                    self._log_throttled(
+                        "write_failed",
+                        "warning",
+                        f"BLE write failed: {exc}",
+                    )
+                    await self._disconnect(client)
+                    await asyncio.sleep(self.reconnect_delay)
+        finally:
+            await self._disconnect(client)
+
+    async def _ensure_connected(self, client: Any) -> bool:
+        if getattr(client, "is_connected", False):
+            return True
+
+        try:
+            await client.connect()
+            self._log("info", f"BLE connected: {self.address}")
+            return True
+        except Exception as exc:
+            self._log_throttled(
+                "connect_failed",
+                "warning",
+                f"BLE connect failed for {self.address}: {exc}",
+            )
+            return False
+
+    async def _disconnect(self, client: Any) -> None:
+        if not getattr(client, "is_connected", False):
+            return
+        try:
+            await client.disconnect()
+            self._log("info", f"BLE disconnected: {self.address}")
+        except Exception as exc:
+            self._log_throttled(
+                "disconnect_failed",
+                "warning",
+                f"BLE disconnect failed for {self.address}: {exc}",
+            )
+
+    def _log_throttled(
+        self, key: str, level: str, message: str, interval: float = 5.0
+    ) -> None:
+        now = time.monotonic()
+        if now - self._last_log_at.get(key, 0.0) < interval:
+            return
+        self._last_log_at[key] = now
+        self._log(level, message)
+
+    def _log(self, level: str, message: str) -> None:
+        if self._logger is None:
+            print(message)
+            return
+        try:
+            self._logger(level, message)
+        except Exception:
+            print(message)
+
+
+class _BleFrameTrigger:
+    def __init__(
+        self,
+        state_name: str,
+        ble_mac: str = "",
+        ble_mac_address: str = "",
+        ble_characteristic: str = "",
+        ble_characteristic_address: str = "",
+        ble_characteristic_uuid: str = "",
+        ble_trigger_frames: Optional[list] = None,
+        ble_frames: Optional[list] = None,
+        ble_write_byte: int = 1,
+        ble_write_with_response: bool = False,
+    ):
+        self.state_name = state_name
+        self.mac = str(ble_mac or ble_mac_address or "").strip()
+        self.characteristic = str(
+            ble_characteristic
+            or ble_characteristic_address
+            or ble_characteristic_uuid
+            or ""
+        ).strip()
+        raw_frames = ble_trigger_frames if ble_trigger_frames is not None else ble_frames
+        self.trigger_frames = self._parse_trigger_frames(raw_frames)
+        self.write_payload = self._parse_write_payload(ble_write_byte)
+        self.write_with_response = bool(ble_write_with_response)
+        self._writer: Optional[_BleGattWriter] = None
+        self._triggered_frames: set[int] = set()
+        self._last_frame: Optional[int] = None
+
+    @staticmethod
+    def _parse_trigger_frames(frames: Optional[list]) -> set[int]:
+        if frames is None:
+            return set()
+        if isinstance(frames, str):
+            frame_values = [
+                value.strip() for value in frames.split(",") if value.strip()
+            ]
+        else:
+            frame_values = frames
+        return {int(float(frame)) for frame in frame_values}
+
+    @staticmethod
+    def _parse_write_payload(value: Any) -> bytes:
+        if isinstance(value, (bytes, bytearray)):
+            if not value:
+                return b"\x01"
+            return bytes([value[0] & 0xFF])
+        if isinstance(value, str):
+            number = int(value.strip(), 0)
+        else:
+            number = int(value)
+        return bytes([number & 0xFF])
+
+    def configured(self) -> bool:
+        return bool(self.mac and self.characteristic)
+
+    def start(self, ctx: BxiExample) -> None:
+        if not self.configured():
+            return
+        if self._writer is None:
+            self._writer = _BleGattWriter(
+                self.mac,
+                self.characteristic,
+                self.write_payload,
+                self.write_with_response,
+                logger=self._make_logger(ctx),
+            )
+        self._writer.start()
+
+    def stop(self) -> None:
+        if self._writer is None:
+            return
+        self._writer.stop()
+        self._writer = None
+
+    def reset(self) -> None:
+        self._triggered_frames.clear()
+        self._last_frame = None
+
+    def write_for_timestep(self, ctx: BxiExample, timestep: float) -> None:
+        if not self.trigger_frames:
+            return
+
+        self.start(ctx)
+        if self._writer is None:
+            return
+
+        frame = int(timestep)
+        if self._last_frame is None or frame <= self._last_frame:
+            candidates = (frame,)
+        else:
+            candidates = range(self._last_frame + 1, frame + 1)
+
+        for candidate in candidates:
+            if candidate not in self.trigger_frames:
+                continue
+            if candidate in self._triggered_frames:
+                continue
+            self._writer.write()
+            self._triggered_frames.add(candidate)
+
+        self._last_frame = frame
+
+    def _make_logger(self, ctx: BxiExample) -> Callable[[str, str], None]:
+        def log(level: str, message: str) -> None:
+            get_logger = getattr(ctx, "get_logger", None)
+            if callable(get_logger):
+                logger = get_logger()
+                log_method = getattr(logger, level, None)
+                if callable(log_method):
+                    log_method(f"[{self.state_name}] {message}")
+                    return
+            print(f"[{self.state_name}] {message}")
+
+        return log
 
 
 class NormalState(RobotControlState):
@@ -98,10 +385,42 @@ class InitialPosState(RobotControlState):
 
 
 class DanceState(RobotControlState):
-    def __init__(self, name: str, state_id: int, start_frame: int = 100):
+    def __init__(
+        self,
+        name: str,
+        state_id: int,
+        start_frame: int = 100,
+        ble_mac: str = "",
+        ble_mac_address: str = "",
+        ble_characteristic: str = "",
+        ble_characteristic_address: str = "",
+        ble_characteristic_uuid: str = "",
+        ble_trigger_frames: Optional[list] = None,
+        ble_frames: Optional[list] = None,
+        ble_write_byte: int = 1,
+        ble_write_with_response: bool = False,
+    ):
         super().__init__(name, state_id)
         self.start_frame = start_frame
         self.playing = True
+        self._ble_frame_trigger = _BleFrameTrigger(
+            name,
+            ble_mac=ble_mac,
+            ble_mac_address=ble_mac_address,
+            ble_characteristic=ble_characteristic,
+            ble_characteristic_address=ble_characteristic_address,
+            ble_characteristic_uuid=ble_characteristic_uuid,
+            ble_trigger_frames=ble_trigger_frames,
+            ble_frames=ble_frames,
+            ble_write_byte=ble_write_byte,
+            ble_write_with_response=ble_write_with_response,
+        )
+        self.ble_mac = self._ble_frame_trigger.mac
+        self.ble_characteristic = self._ble_frame_trigger.characteristic
+        self.ble_trigger_frames = self._ble_frame_trigger.trigger_frames
+
+    def on_bind(self, ctx):
+        self._ble_frame_trigger.start(ctx)
 
     def on_prepare_enter(
         self,
@@ -114,10 +433,17 @@ class DanceState(RobotControlState):
         if hasattr(ctx.dance, "timeinit"):
             ctx.dance.timeinit = 0.0
         ctx.preheat_model(ctx.dance)
+        self._ble_frame_trigger.reset()
+        self._ble_frame_trigger.start(ctx)
 
     def on_enter(self, ctx: BxiExample) -> None:
         self.playing = True
         ctx.dance.timestep = self.start_frame
+        self._ble_frame_trigger.reset()
+        self._ble_frame_trigger.start(ctx)
+
+    def on_exit(self, ctx: BxiExample) -> None:
+        super().on_exit(ctx)
 
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
         return self._motor_frame(
@@ -131,6 +457,9 @@ class DanceState(RobotControlState):
     ) -> Optional[MotorFrame]:
         if ctx.dance.timestep >= ctx.dance.motionpos.shape[0]:
             return None
+
+        if self.playing and not on_translation:
+            self._ble_frame_trigger.write_for_timestep(ctx, ctx.dance.timestep)
 
         qpos = ctx.dance.inference_step(
             ctx.current_q,
@@ -189,6 +518,9 @@ class MotionState(RobotControlState):
     def __init__(self, name: str, state_id: int):
         super().__init__(name, state_id)
         self.playing = True
+
+    def on_bind(self, ctx):
+        pass
 
     def _policy(self, ctx: BxiExample) -> Any:
         return getattr(ctx, self.policy_attr)

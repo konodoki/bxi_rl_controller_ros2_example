@@ -233,6 +233,12 @@ states:
       confirm: true
       confirm_message: 请确保机器人周围1米范围内没有障碍物
     behavior: DanceState
+    params:
+      ble_mac: "E0:72:A1:D8:39:8E"
+      ble_characteristic_address: "0000ee01-0000-1000-8000-00805f9b34fb"
+      ble_trigger_frames: [100, 500, 800]
+      ble_write_byte: 0x01
+      ble_write_with_response: false
     transitions:
       on_event:
         normal_event:
