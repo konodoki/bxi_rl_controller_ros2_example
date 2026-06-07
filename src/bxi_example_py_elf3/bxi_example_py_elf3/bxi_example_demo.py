@@ -246,9 +246,9 @@ class BxiExample(HotReloadMixin, Node):
             model_file("mjlab_model/recover.onnx"),
             start_frame=600,
         )
-        self.dance: DanceMotionPolicyGravityIsaaclabV3 = DanceMotionPolicyGravityIsaaclabV3(
-            model_file("isaaclab_model/shuishou.npz"),
-            model_file("isaaclab_model/shuishou.onnx"),
+        self.dance: DanceMotionPolicyGravityIsaaclabV2 = DanceMotionPolicyGravityIsaaclabV2(
+            model_file("isaaclab_model/change_face_fine.npz"),
+            model_file("isaaclab_model/change_face_fine.onnx"),
             start_frame=60,
             fixed_pos=True
         )
