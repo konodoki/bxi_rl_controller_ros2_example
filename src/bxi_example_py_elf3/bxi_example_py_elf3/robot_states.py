@@ -385,11 +385,24 @@ class InitialPosState(RobotControlState):
 
 
 class DanceState(RobotControlState):
+    default_segments = (
+        (0, 1036),
+        (1036, 1800),
+        (1800, 2800),
+        (2800, 3800),
+        (3800, 4800),
+        (4800, 5800),
+    )
+
     def __init__(
         self,
         name: str,
         state_id: int,
         start_frame: int = 100,
+        segments: Optional[list] = None,
+        dance_segments: Optional[list] = None,
+        segment_indices: Optional[list] = None,
+        dance_segment_indices: Optional[list] = None,
         ble_mac: str = "",
         ble_mac_address: str = "",
         ble_characteristic: str = "",
@@ -403,6 +416,15 @@ class DanceState(RobotControlState):
         super().__init__(name, state_id)
         self.start_frame = start_frame
         self.playing = True
+        raw_segments = segments if segments is not None else dance_segments
+        raw_indices = (
+            segment_indices
+            if segment_indices is not None
+            else dance_segment_indices
+        )
+        self.segments = self._parse_segments(raw_segments)
+        self.segment_indices = self._parse_segment_indices(raw_indices)
+        self.segment_cursor = 0
         self._ble_frame_trigger = _BleFrameTrigger(
             name,
             ble_mac=ble_mac,
@@ -419,6 +441,82 @@ class DanceState(RobotControlState):
         self.ble_characteristic = self._ble_frame_trigger.characteristic
         self.ble_trigger_frames = self._ble_frame_trigger.trigger_frames
 
+    @classmethod
+    def _parse_segments(cls, segments: Optional[list]) -> list[tuple[int, int]]:
+        if segments is None:
+            return list(cls.default_segments)
+        if isinstance(segments, str):
+            parts = [part.strip() for part in segments.split(";") if part.strip()]
+            parsed_segments = []
+            for part in parts:
+                start_text, end_text = [value.strip() for value in part.split(",", 1)]
+                parsed_segments.append((int(float(start_text)), int(float(end_text))))
+            return cls._validate_segments(parsed_segments)
+
+        parsed_segments = []
+        for segment in segments:
+            if isinstance(segment, str):
+                start_text, end_text = [
+                    value.strip() for value in segment.split(",", 1)
+                ]
+                start, end = int(float(start_text)), int(float(end_text))
+            else:
+                start, end = segment
+                start, end = int(float(start)), int(float(end))
+            parsed_segments.append((start, end))
+        return cls._validate_segments(parsed_segments)
+
+    @staticmethod
+    def _validate_segments(segments: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        if not segments:
+            raise ValueError("DanceState segments must not be empty")
+        for start, end in segments:
+            if start < 0 or end <= start:
+                raise ValueError(
+                    f"DanceState segment must satisfy 0 <= start < end: {(start, end)}"
+                )
+        return segments
+
+    def _parse_segment_indices(self, indices: Optional[list]) -> list[int]:
+        if indices is None:
+            return list(range(len(self.segments)))
+        if isinstance(indices, str):
+            index_values = [
+                value.strip() for value in indices.split(",") if value.strip()
+            ]
+        else:
+            index_values = indices
+        parsed_indices = [int(float(index)) for index in index_values]
+        if not parsed_indices:
+            raise ValueError("DanceState segment_indices must not be empty")
+        for index in parsed_indices:
+            if index < 0 or index >= len(self.segments):
+                raise ValueError(
+                    f"DanceState segment index out of range: {index}, "
+                    f"segments={len(self.segments)}"
+                )
+        return parsed_indices
+
+    def _current_segment(self) -> tuple[int, int]:
+        return self.segments[self.segment_indices[self.segment_cursor]]
+
+    def _reset_segment_playback(self, ctx: BxiExample) -> None:
+        self.segment_cursor = 0
+        ctx.dance.timestep = self._current_segment()[0]
+
+    def _advance_segment_if_needed(self, ctx: BxiExample) -> bool:
+        _, end_frame = self._current_segment()
+        if ctx.dance.timestep < end_frame:
+            return True
+
+        self.segment_cursor += 1
+        if self.segment_cursor >= len(self.segment_indices):
+            return False
+
+        ctx.dance.timestep = self._current_segment()[0]
+        self._ble_frame_trigger.reset()
+        return True
+
     def on_bind(self, ctx):
         self._ble_frame_trigger.start(ctx)
 
@@ -429,7 +527,7 @@ class DanceState(RobotControlState):
         transition: TransitionProfile,
     ) -> None:
         super().on_prepare_enter(ctx, from_state, transition)
-        ctx.dance.timestep = self.start_frame
+        self._reset_segment_playback(ctx)
         if hasattr(ctx.dance, "timeinit"):
             ctx.dance.timeinit = 0.0
         ctx.preheat_model(ctx.dance)
@@ -438,7 +536,7 @@ class DanceState(RobotControlState):
 
     def on_enter(self, ctx: BxiExample) -> None:
         self.playing = True
-        ctx.dance.timestep = self.start_frame
+        self._reset_segment_playback(ctx)
         self._ble_frame_trigger.reset()
         self._ble_frame_trigger.start(ctx)
 
@@ -455,6 +553,8 @@ class DanceState(RobotControlState):
     def get_motor_frame(
         self, ctx: BxiExample, dt: float, on_translation: bool
     ) -> Optional[MotorFrame]:
+        if not self._advance_segment_if_needed(ctx):
+            return None
         if ctx.dance.timestep >= ctx.dance.motionpos.shape[0]:
             return None
 
@@ -478,9 +578,12 @@ class DanceState(RobotControlState):
         )
 
     def on_update(self, ctx: BxiExample, dt: float) -> None:
-        if ctx.dance.timestep >= ctx.dance.motionpos.shape[0]:
+        if (
+            not self._advance_segment_if_needed(ctx)
+            or ctx.dance.timestep >= ctx.dance.motionpos.shape[0]
+        ):
             print("Motion replay finished, resetting simulation.")
-            ctx.dance.timestep = self.start_frame
+            self._reset_segment_playback(ctx)
             ctx.request_state(
                 "normal",
                 trigger="motion_finished",
