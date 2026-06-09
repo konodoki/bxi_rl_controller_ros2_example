@@ -63,10 +63,13 @@ class NormalDepthState(RobotControlState):
     depth_image_topic = "/camera/depth/image_64x36"
     depth_uint16_scale = 0.001
     depth_timeout_sec = 1.0
+    depth_inference_rate_hz = 20.0
 
     def on_bind(self, ctx: BxiExample) -> None:
         self.depth_rotated: Optional[np.ndarray] = None
+        self._policy_depth_rotated: Optional[np.ndarray] = None
         self._last_depth_time: Optional[float] = None
+        self._last_policy_depth_time: Optional[float] = None
         self._depth_enter_time = time.monotonic()
         self._missing_depth_warned = False
         self._bad_depth_warned = False
@@ -150,6 +153,8 @@ class NormalDepthState(RobotControlState):
         super().on_prepare_enter(ctx, from_state, transition)
         self._depth_enter_time = time.monotonic()
         self._depth_timeout_warned = False
+        self._policy_depth_rotated = None
+        self._last_policy_depth_time = None
 
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
         return self._motor_frame(
@@ -160,8 +165,8 @@ class NormalDepthState(RobotControlState):
         self, ctx: BxiExample, dt: float, on_translation: bool
     ) -> Optional[MotorFrame]:
         cmd_vel = self.get_cmd_vel(ctx)
-        depth_rotated = self.depth_rotated
-        if depth_rotated is None:
+        depth_for_inference = self._get_depth_for_inference()
+        if depth_for_inference is None:
             if not self._missing_depth_warned:
                 print(f"waiting for depth image: {self.depth_image_topic}")
                 self._missing_depth_warned = True
@@ -173,9 +178,29 @@ class NormalDepthState(RobotControlState):
             ctx.current_quat_wxyz,
             ctx.current_omega,
             cmd_vel,
-            depth_rotated,
+            depth_for_inference,
         )
         return self._motor_frame(qpos, ctx.normal_depth.kps, ctx.normal_depth.kds)
+
+    def _get_depth_for_inference(self) -> Optional[np.ndarray]:
+        latest_depth = self.depth_rotated
+        if latest_depth is None:
+            return None
+
+        rate_hz = float(self.depth_inference_rate_hz)
+        if rate_hz <= 0.0:
+            return latest_depth
+
+        now = time.monotonic()
+        min_interval = 1.0 / rate_hz
+        if (
+            self._policy_depth_rotated is None
+            or self._last_policy_depth_time is None
+            or now - self._last_policy_depth_time >= min_interval
+        ):
+            self._policy_depth_rotated = latest_depth
+            self._last_policy_depth_time = now
+        return self._policy_depth_rotated
 
     def _is_depth_timed_out(self) -> bool:
         now = time.monotonic()
