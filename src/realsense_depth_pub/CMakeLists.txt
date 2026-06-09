@@ -8,7 +8,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(realsense2 REQUIRED)
+find_package(realsense2 QUIET)
+
+if(NOT realsense2_FOUND)
+    message(FATAL_ERROR 
+        "###########################################################\n"
+        "错误：找不到 RealSense2 库！\n"
+        "请安装：\n"
+        "  sudo apt install ros-humble-realsense2\n"
+        "###########################################################"
+    )
+endif()
 
 add_executable(depth_publisher_node src/depth_publisher_node.cpp)
 
