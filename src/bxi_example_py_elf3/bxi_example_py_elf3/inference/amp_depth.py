@@ -52,9 +52,45 @@ class CircularBuffer:
         self._num_pushes = 0
 
 
+cv2 = _get_cv2()
+
+
+def depth_to_bgr(depth_image, value_range):
+    depth_min, depth_max = value_range
+    depth_vis = np.clip(depth_image, depth_min, depth_max)
+    depth_vis = (depth_vis - depth_min) / max(depth_max - depth_min, 1e-6)
+    depth_vis = (depth_vis * 255.0).astype(np.uint8)
+    if cv2 is None:
+        return np.repeat(depth_vis[..., None], 3, axis=2)
+    return cv2.applyColorMap(depth_vis, cv2.COLORMAP_VIRIDIS)
+
+def resize_to_height(image, target_h):
+    h, w = image.shape[:2]
+    target_w = max(1, int(round(w * target_h / max(h, 1))))
+    return cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+
+
 class HumanoidGaitDepthPolicyIsaaclab:
     """带深度相机输入的 ELF3 / BX 29DoF 行走策略部署类。"""
 
+    def show_depth_debug(self, depth_original, depth_cropped, crop_rect):
+        if cv2 is None:
+            return
+        original_bgr = depth_to_bgr(depth_original, self.depth_range)
+        x, y, w, h = crop_rect
+        cv2.rectangle(original_bgr, (x, y), (x + w - 1, y + h - 1), (0, 0, 255), 1)
+
+        cropped_range = self.depth_output_range if self.depth_normalize else self.depth_range
+        cropped_bgr = depth_to_bgr(depth_cropped, cropped_range)
+
+        target_h = 360
+        original_bgr = resize_to_height(original_bgr, target_h)
+        cropped_bgr = resize_to_height(cropped_bgr, target_h)
+        cv2.putText(original_bgr, "original + crop", (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(cropped_bgr, "cropped", (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        combined = np.hstack([original_bgr, cropped_bgr])
+        cv2.imshow("Depth Debug", combined)
+        cv2.waitKey(1)
     def __init__(self, model_onnx_path: str, cmd_is_joystick_ratio: bool = False):
         """
         Args:
@@ -244,44 +280,71 @@ class HumanoidGaitDepthPolicyIsaaclab:
             raise ValueError(f"AMP depth obs dim mismatch: got {obs.shape[0]}, expected {self.num_obs}")
         return np.clip(obs, -100, 100).astype(np.float32)
 
-    def preprocess_depth_image(self, depth_image):
+    def preprocess_depth_image(self, depth_image, visualize=False):
         if depth_image is None:
             return np.zeros((self.depth_h, self.depth_w), dtype=np.float32)
 
         depth_image = np.asarray(depth_image, dtype=np.float32)
-        if depth_image.shape == (self.depth_h, self.depth_w):
-            return depth_image.copy()
+        input_shape = depth_image.shape
+        if depth_image.ndim != 2:
+            raise ValueError(
+                f"AMP depth image must be 2D, got shape {input_shape}"
+            )
 
         depth_image = np.flip(np.transpose(depth_image.copy(), (1, 0)), axis=0)
-        if self.crop_region is not None:
-            top, _bottom, left, _right = self.crop_region
+        depth_original = depth_image.copy()
+        crop_rect = (0, 0, depth_image.shape[1], depth_image.shape[0])
+
+        crop_region = self.crop_region
+        if crop_region is not None:
+            top, _bottom, left, _right = crop_region
             target_h = self.depth_w
             target_w = self.depth_h
             start_h = left
             start_w = top
-            depth_image = depth_image[start_w:start_w + target_w, start_h:start_h + target_h]
+            depth_image = depth_image[
+                start_w:start_w + target_w,
+                start_h:start_h + target_h,
+            ]
+            crop_rect = (start_h, start_w, target_h, target_w)
 
-        cv2_module = _get_cv2()
-        if self.gaussian_kernel_size is not None and cv2_module is not None:
-            depth_image = cv2_module.GaussianBlur(
-                depth_image.astype(np.float32),
-                self.gaussian_kernel_size,
-                self.gaussian_sigma,
-            )
-
-        d_min, d_max = self.depth_range
-        depth_image = np.clip(depth_image, d_min, d_max)
-        if self.depth_normalize:
-            depth_image = (depth_image - d_min) / max(d_max - d_min, 1e-6)
-            out_min, out_max = self.depth_output_range
-            depth_image = depth_image * (out_max - out_min) + out_min
-
-        if depth_image.shape != (self.depth_h, self.depth_w):
+        expected_shape = (self.depth_h, self.depth_w)
+        if depth_image.shape != expected_shape:
             raise ValueError(
-                f"AMP depth image shape mismatch: got {depth_image.shape}, "
-                f"expected {(self.depth_h, self.depth_w)}"
+                "AMP depth image shape mismatch after crop: "
+                f"input={input_shape}, rotated={depth_original.shape}, "
+                f"cropped={depth_image.shape}, expected={expected_shape}, "
+                f"crop_region={self.crop_region}"
             )
-        return depth_image.copy().astype(np.float32)
+
+        if self.gaussian_kernel_size is not None:
+            if cv2 is not None:
+                depth_image = cv2.GaussianBlur(
+                    depth_image.astype(np.float32),
+                    self.gaussian_kernel_size,
+                    self.gaussian_sigma,
+                )
+            else:
+                print("[WARN] cv2 is not available, skip depth GaussianBlur")
+
+        depth_range = self.depth_range
+        depth_clipped = np.clip(depth_image, depth_range[0], depth_range[1])
+
+        if self.depth_normalize:
+            d_min, d_max = depth_range
+            depth_norm = (depth_clipped - d_min) / (d_max - d_min)
+            out_min, out_max = self.depth_output_range
+            depth_norm = depth_norm * (out_max - out_min) + out_min
+        else:
+            depth_norm = depth_clipped
+        if visualize:
+            self.show_depth_debug(depth_original, depth_norm, crop_rect)
+        if depth_norm.shape != expected_shape:
+            raise ValueError(
+                f"AMP depth image shape mismatch after preprocess: "
+                f"got {depth_norm.shape}, expected {expected_shape}"
+            )
+        return depth_norm.copy().astype(np.float32)
 
     def _run_policy(self, obs, depth_image):
         if self.model_input_mode == "history_only":
@@ -313,7 +376,7 @@ class HumanoidGaitDepthPolicyIsaaclab:
         return self.actor_obs_buffer.reshape(1, -1).astype(np.float32)
 
     def _get_depth_image_downsample_obs(self, depth_image):
-        self.depth_image_buffer.append(self.preprocess_depth_image(depth_image))
+        self.depth_image_buffer.append(self.preprocess_depth_image(depth_image, False))
         return self.depth_image_buffer.buffer[self.depth_obs_indices, ...]
 
     def _update_command(self, cmd_vel):
