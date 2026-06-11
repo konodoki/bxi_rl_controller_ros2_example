@@ -257,6 +257,7 @@ system:
     - "killall -SIGINT bxi_bms"
     - "killall -SIGINT bxi_example_bms"
     - "killall -SIGINT bxi-voice"
+    - "killall -SIGINT depth_publisher_node"
 
 #互斥定义，只能acquire一次，但是可以release多次
 system_mutexes:
