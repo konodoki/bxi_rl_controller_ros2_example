@@ -15,7 +15,8 @@ if(NOT realsense2_FOUND)
         "###########################################################\n"
         "错误：找不到 RealSense2 库！\n"
         "请安装：\n"
-        "  sudo apt install ros-humble-realsense2\n"
+        "  sudo apt install ros-humble-realsense2-camera\n"
+        "或者手动编译librealsense2\n"
         "###########################################################"
     )
 endif()
