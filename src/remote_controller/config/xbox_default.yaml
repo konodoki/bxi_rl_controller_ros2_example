@@ -1,20 +1,22 @@
+inputs:
+  selection:
+    scan_interval_ms: 100
+    promote_stable_ms: 500
 sources:
   gamepad:
     type: joystick
     device: /dev/input/jsBattleDragon
+    priority: 50
+    ready_timeout_ms: 1000
+    loss_timeout_ms: 300
+    cooldown_ms: 1000
     signals:
       gamepad.left_y:
         from: js.axis.3
-        timeout_ms: 3000
-        failsafe: 0.0
       gamepad.left_x:
         from: js.axis.0
-        timeout_ms: 3000
-        failsafe: 0.0
       gamepad.yaw:
         from: js.axis.6
-        timeout_ms: 3000
-        failsafe: 0.0
       gamepad.trigger_left:
         from: js.axis.5
       gamepad.trigger_right:
@@ -37,6 +39,10 @@ sources:
         from: js.button.4
   keyboard:
     type: keyboard
+    priority: 0
+    ready_timeout_ms: 1000
+    loss_timeout_ms: 300
+    cooldown_ms: 1000
     poll_timeout_us: 20000
     hold_ms: 200
     stop: space
