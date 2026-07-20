@@ -22,6 +22,7 @@ public:
     std::vector<std::string> set_axis(int axis_index, double value);
     std::vector<std::string> set_signal(const std::string &source, double value);
     void touch_runtime_sources_with_prefix(const std::string &prefix);
+    void clear_signals_with_prefix(const std::string &prefix);
     void zero_motion_axes();
     void reset_motion();
     std::vector<std::string> tick();
@@ -47,9 +48,11 @@ private:
     std::vector<bool> binding_active_;
     int output_slots_[kButtonSlotCount + 1] = {0};
     int edge_pulse_slots_[kButtonSlotCount + 1] = {0};
+    int last_logged_output_slots_[kButtonSlotCount + 1] = {0};
     double height_filtered_ = kStandHeight;
 
     std::vector<std::string> refresh_bindings(bool emit_edges = true);
+    void log_button_output_changes();
     void refresh_controls();
     void evaluate_control_recursive(
         const std::string &control,
