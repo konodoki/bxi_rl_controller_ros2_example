@@ -6,7 +6,7 @@ sources:
   crsf:
     type: crsf
     device: /dev/ttyCRSF
-    baud_rate: 460800
+    baud_rate: 921600
     priority: 100
     ready_timeout_ms: 1000
     loss_timeout_ms: 300
@@ -20,30 +20,14 @@ sources:
         from: crsf.channel.3
       crsf.right_x:
         from: crsf.channel.4
-      crsf.right_y:
+      crsf.button_group_a:
         from: crsf.channel.5
       crsf.trigger_left:
         from: crsf.channel.6
-      crsf.a:
+      crsf.right_y:
         from: crsf.channel.7
-      crsf.b:
+      crsf.button_group_b:
         from: crsf.channel.8
-      crsf.x:
-        from: crsf.channel.9
-      crsf.y:
-        from: crsf.channel.10
-      crsf.lb:
-        from: crsf.channel.11
-      crsf.rb:
-        from: crsf.channel.12
-      crsf.start:
-        from: crsf.channel.13
-      crsf.stop:
-        from: crsf.channel.14
-      crsf.dpad_x:
-        from: crsf.channel.15
-      crsf.dpad_y:
-        from: crsf.channel.16
   gamepad:
     type: joystick
     device: /dev/input/jsBattleDragon
@@ -149,11 +133,11 @@ controls:
   move.vx:
     type: analog
     mix: max_abs
-    sources:
+    inputs:
     - source: gamepad.left_y
       direction: -1
       curve: stick
-    - source: crsf.left_y
+    - source: crsf.right_y
       direction: -1
       curve: stick
     - source: keyboard.vx
@@ -164,7 +148,7 @@ controls:
   move.vy:
     type: analog
     mix: max_abs
-    sources:
+    inputs:
     - source: gamepad.left_x
       direction: -1
       curve: stick
@@ -179,11 +163,8 @@ controls:
   move.yaw:
     type: analog
     mix: max_abs
-    sources:
+    inputs:
     - source: gamepad.yaw
-      direction: -1
-      curve: stick
-    - source: crsf.right_x
       direction: -1
       curve: stick
     - source: keyboard.yaw
@@ -191,184 +172,307 @@ controls:
     min: -1.0
     max: 1.0
     alpha: 0.05
+  crsf.yaw:
+    type: analog
+    mix: sum
+    inputs:
+    - name: dpad_left
+      when:
+      - crsf.button_group_b=dpad_left
+      value: 1.0
+    - name: dpad_right
+      when:
+      - crsf.button_group_b=dpad_right
+      value: -1.0
+    min: -1.0
+    max: 1.0
   gamepad.stop_event:
     type: bool
-    source: gamepad.stop
+    inputs:
+    - source: gamepad.stop
   gamepad.start_event:
     type: bool
-    source: gamepad.start
+    inputs:
+    - source: gamepad.start
   gamepad.lb_event:
     type: bool
-    source: gamepad.lb
+    inputs:
+    - source: gamepad.lb
   gamepad.rb_event:
     type: bool
-    source: gamepad.rb
+    inputs:
+    - source: gamepad.rb
   gamepad.a_event:
     type: bool
-    source: gamepad.a
+    inputs:
+    - source: gamepad.a
   gamepad.b_event:
     type: bool
-    source: gamepad.b
+    inputs:
+    - source: gamepad.b
   gamepad.x_event:
     type: bool
-    source: gamepad.x
+    inputs:
+    - source: gamepad.x
   gamepad.y_event:
     type: bool
-    source: gamepad.y
+    inputs:
+    - source: gamepad.y
+  crsf.button_group_a:
+    type: enum
+    default: idle
+    hysteresis: 0.03
+    inputs:
+    - source: crsf.button_group_a
+    positions:
+      a:
+      - -1.0
+      - -0.846
+      b:
+      - -0.845
+      - -0.602
+      x:
+      - -0.601
+      - -0.358
+      y:
+      - -0.357
+      - -0.118
+      idle:
+      - -0.117
+      - 1.0
+  crsf.button_group_b:
+    type: enum
+    default: idle
+    hysteresis: 0.03
+    inputs:
+    - source: crsf.button_group_b
+    positions:
+      lb:
+      - -1.0
+      - -0.846
+      rb:
+      - -0.845
+      - -0.602
+      back:
+      - -0.601
+      - -0.358
+      start:
+      - -0.357
+      - -0.118
+      idle:
+      - -0.117
+      - 0.114
+      dpad_up:
+      - 0.115
+      - 0.351
+      dpad_down:
+      - 0.352
+      - 0.596
+      dpad_left:
+      - 0.597
+      - 0.841
+      dpad_right:
+      - 0.842
+      - 1.0
   crsf.stop_event:
     type: bool
-    source: crsf.stop
-    threshold: 0.5
-    hysteresis: 0.05
+    inputs:
+    - when:
+      - crsf.button_group_b=back
+      value: true
   crsf.start_event:
     type: bool
-    source: crsf.start
-    threshold: 0.5
-    hysteresis: 0.05
+    inputs:
+    - when:
+      - crsf.button_group_b=start
+      value: true
   crsf.lb_event:
     type: bool
-    source: crsf.lb
-    threshold: 0.5
-    hysteresis: 0.05
+    inputs:
+    - when:
+      - crsf.button_group_b=lb
+      value: true
   crsf.rb_event:
     type: bool
-    source: crsf.rb
-    threshold: 0.5
-    hysteresis: 0.05
+    inputs:
+    - when:
+      - crsf.button_group_b=rb
+      value: true
   crsf.a_event:
     type: bool
-    source: crsf.a
-    threshold: 0.5
-    hysteresis: 0.05
+    inputs:
+    - when:
+      - crsf.button_group_a=a
+      value: true
   crsf.b_event:
     type: bool
-    source: crsf.b
-    threshold: 0.5
-    hysteresis: 0.05
+    inputs:
+    - when:
+      - crsf.button_group_a=b
+      value: true
   crsf.x_event:
     type: bool
-    source: crsf.x
-    threshold: 0.5
-    hysteresis: 0.05
+    inputs:
+    - when:
+      - crsf.button_group_a=x
+      value: true
   crsf.y_event:
     type: bool
-    source: crsf.y
-    threshold: 0.5
-    hysteresis: 0.05
+    inputs:
+    - when:
+      - crsf.button_group_a=y
+      value: true
   system.stop_event:
     type: bool
-    expr:
-      any:
-      - - gamepad.stop_event
-      - - crsf.stop_event
+    inputs:
+    - when:
+        any:
+        - gamepad.stop_event
+        - crsf.stop_event
+      value: true
   system.start_event:
     type: bool
-    expr:
-      any:
-      - - gamepad.start_event
-      - - crsf.start_event
+    inputs:
+    - when:
+        any:
+        - gamepad.start_event
+        - crsf.start_event
+      value: true
   shoulder.left_event:
     type: bool
-    expr:
-      any:
-      - - gamepad.lb_event
-      - - crsf.lb_event
+    inputs:
+    - when:
+        any:
+        - gamepad.lb_event
+        - crsf.lb_event
+      value: true
   shoulder.right_event:
     type: bool
-    expr:
-      any:
-      - - gamepad.rb_event
-      - - crsf.rb_event
+    inputs:
+    - when:
+        any:
+        - gamepad.rb_event
+        - crsf.rb_event
+      value: true
   button.a_event:
     type: bool
-    expr:
-      any:
-      - - gamepad.a_event
-      - - crsf.a_event
+    inputs:
+    - when:
+        any:
+        - gamepad.a_event
+        - crsf.a_event
+      value: true
   button.b_event:
     type: bool
-    expr:
-      any:
-      - - gamepad.b_event
-      - - crsf.b_event
+    inputs:
+    - when:
+        any:
+        - gamepad.b_event
+        - crsf.b_event
+      value: true
   button.x_event:
     type: bool
-    expr:
-      any:
-      - - gamepad.x_event
-      - - crsf.x_event
+    inputs:
+    - when:
+        any:
+        - gamepad.x_event
+        - crsf.x_event
+      value: true
   button.y_event:
     type: bool
-    expr:
-      any:
-      - - gamepad.y_event
-      - - crsf.y_event
+    inputs:
+    - when:
+        any:
+        - gamepad.y_event
+        - crsf.y_event
+      value: true
   gamepad.trigger.left_event:
     type: bool
-    source: gamepad.trigger_left
     threshold: 0.85
     hysteresis: 0.05
+    inputs:
+    - source: gamepad.trigger_left
   gamepad.trigger.right_event:
     type: bool
-    source: gamepad.trigger_right
     threshold: 0.85
     hysteresis: 0.05
+    inputs:
+    - source: gamepad.trigger_right
   crsf.trigger.left_event:
     type: bool
-    source: crsf.trigger_left
     threshold: 0.5
     hysteresis: 0.05
+    inputs:
+    - source: crsf.trigger_left
   crsf.trigger.right_event:
     type: bool
-    source: crsf.trigger_right
     threshold: 0.5
     hysteresis: 0.05
+    inputs:
+    - source: crsf.trigger_right
   trigger.left_event:
     type: bool
-    expr:
-      any:
-      - - gamepad.trigger.left_event
-      - - crsf.trigger.left_event
+    inputs:
+    - when:
+        any:
+        - gamepad.trigger.left_event
+        - crsf.trigger.left_event
+      value: true
   trigger.right_event:
     type: bool
-    expr:
-      any:
-      - - gamepad.trigger.right_event
-      - - crsf.trigger.right_event
+    inputs:
+    - when:
+        any:
+        - gamepad.trigger.right_event
+        - crsf.trigger.right_event
+      value: true
   keyboard.normal_event:
     type: bool
-    source: keyboard.normal
+    inputs:
+    - source: keyboard.normal
   keyboard.pd_break_event:
     type: bool
-    source: keyboard.pd_break
+    inputs:
+    - source: keyboard.pd_break
   keyboard.recover_event:
     type: bool
-    source: keyboard.recover
+    inputs:
+    - source: keyboard.recover
   keyboard.dance_event:
     type: bool
-    source: keyboard.dance
+    inputs:
+    - source: keyboard.dance
   keyboard.amp_run_event:
     type: bool
-    source: keyboard.amp_run
+    inputs:
+    - source: keyboard.amp_run
   keyboard.normal_run_event:
     type: bool
-    source: keyboard.normal_run
+    inputs:
+    - source: keyboard.normal_run
   keyboard.forward_flip_event:
     type: bool
-    source: keyboard.forward_flip
+    inputs:
+    - source: keyboard.forward_flip
   keyboard.applause_event:
     type: bool
-    source: keyboard.applause
+    inputs:
+    - source: keyboard.applause
   keyboard.hello_event:
     type: bool
-    source: keyboard.hello
+    inputs:
+    - source: keyboard.hello
 outputs:
   conflict_policy: first_wins
   publish_on_change: true
   analog:
     vx: move.vx
     vy: move.vy
-    yaw: move.yaw
+    yaw:
+      controls:
+      - move.yaw
+      - crsf.yaw
+      mix: max_abs
   edge:
   - output: system.stop
     when:
