@@ -60,14 +60,25 @@ class NormalState(RobotControlState):
             ctx.set_motor_target(*frame)
             
 class NormalDepthState(RobotControlState):
-    depth_image_topic = "/camera/depth/image_64x36"
+    # Hard switch before startup: False=8-frame depth_walk, True=origin-camera.
+    use_origin_camera = True
     depth_uint16_scale = 0.001
     depth_timeout_sec = 1.0
-    depth_inference_rate_hz = 20.0
 
     def on_bind(self, ctx: BxiExample) -> None:
+        if self.use_origin_camera:
+            self.depth_policy = ctx.normal_depth_origin
+            self.depth_image_topic = "/camera/depth/image_36x48"
+            self.expected_depth_shape = (36, 48)
+        else:
+            self.depth_policy = ctx.normal_depth
+            self.depth_image_topic = "/camera/depth/image_64x36"
+            self.expected_depth_shape = (64, 36)
+
         self.depth_rotated: Optional[np.ndarray] = None
+        self._latest_depth_frame_id = 0
         self._policy_depth_rotated: Optional[np.ndarray] = None
+        self._policy_depth_frame_id: Optional[int] = None
         self._last_depth_time: Optional[float] = None
         self._last_policy_depth_time: Optional[float] = None
         self._depth_enter_time = time.monotonic()
@@ -85,16 +96,29 @@ class NormalDepthState(RobotControlState):
             self.depth_image_callback,
             qos,
         )
+        print(
+            f"depth mode: {'origin_camera' if self.use_origin_camera else 'depth_walk'}, "
+            f"topic={self.depth_image_topic}, "
+            f"post-rotation shape={self.expected_depth_shape}"
+        )
 
     def depth_image_callback(self, msg: sensor_msgs.msg.Image) -> None:
         depth_meters = self._depth_msg_to_meters(msg)
         if depth_meters is None:
             return
 
-        depth_rotated = np.rot90(depth_meters, k=-1)
-        self.depth_rotated = np.ascontiguousarray(
-            depth_rotated.astype(np.float32)
-        )
+        depth_rotated = np.ascontiguousarray(np.rot90(depth_meters, k=-1).astype(np.float32))
+        if depth_rotated.shape != self.expected_depth_shape:
+            if not self._bad_depth_warned:
+                print(
+                    f"unexpected post-rotation depth shape from {self.depth_image_topic}: "
+                    f"got {depth_rotated.shape}, expected {self.expected_depth_shape}"
+                )
+                self._bad_depth_warned = True
+            return
+
+        self.depth_rotated = depth_rotated
+        self._latest_depth_frame_id += 1
         self._last_depth_time = time.monotonic()
         self._missing_depth_warned = False
         self._depth_timeout_warned = False
@@ -151,14 +175,18 @@ class NormalDepthState(RobotControlState):
         transition: TransitionProfile,
     ) -> None:
         super().on_prepare_enter(ctx, from_state, transition)
+        self.depth_policy.reset()
         self._depth_enter_time = time.monotonic()
         self._depth_timeout_warned = False
         self._policy_depth_rotated = None
+        self._policy_depth_frame_id = None
         self._last_policy_depth_time = None
 
     def get_first_frame(self, ctx: BxiExample) -> Optional[MotorFrame]:
         return self._motor_frame(
-            ctx.normal_depth.target_dof_pos, ctx.normal_depth.kps, ctx.normal_depth.kds
+            self.depth_policy.target_dof_pos,
+            self.depth_policy.kps,
+            self.depth_policy.kds,
         )
 
     def get_motor_frame(
@@ -172,35 +200,35 @@ class NormalDepthState(RobotControlState):
                 self._missing_depth_warned = True
             return None
 
-        qpos = ctx.normal_depth.inference_step(
+        depth_image, depth_frame_id = depth_for_inference
+        qpos = self.depth_policy.inference_step(
             ctx.current_q,
             ctx.current_dq,
             ctx.current_quat_wxyz,
             ctx.current_omega,
             cmd_vel,
-            depth_for_inference,
+            depth_image,
+            depth_frame_id=depth_frame_id,
         )
-        return self._motor_frame(qpos, ctx.normal_depth.kps, ctx.normal_depth.kds)
+        return self._motor_frame(qpos, self.depth_policy.kps, self.depth_policy.kds)
 
-    def _get_depth_for_inference(self) -> Optional[np.ndarray]:
+    def _get_depth_for_inference(self) -> Optional[tuple[np.ndarray, int]]:
         latest_depth = self.depth_rotated
         if latest_depth is None:
             return None
 
-        rate_hz = float(self.depth_inference_rate_hz)
-        if rate_hz <= 0.0:
-            return latest_depth
-
         now = time.monotonic()
-        min_interval = 1.0 / rate_hz
+        min_interval = float(self.depth_policy.depth_update_period)
         if (
             self._policy_depth_rotated is None
+            or self._policy_depth_frame_id is None
             or self._last_policy_depth_time is None
             or now - self._last_policy_depth_time >= min_interval
         ):
             self._policy_depth_rotated = latest_depth
+            self._policy_depth_frame_id = self._latest_depth_frame_id
             self._last_policy_depth_time = now
-        return self._policy_depth_rotated
+        return self._policy_depth_rotated, self._policy_depth_frame_id
 
     def _is_depth_timed_out(self) -> bool:
         now = time.monotonic()

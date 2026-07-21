@@ -125,6 +125,14 @@ int main(int argc,char** argv){
   bool publish_full=true;
   float hfov=55.2f, vfov=55.2f;
 
+  // Optional second projection for the origin-camera walking policy.  Its
+  // published image remains in RealSense orientation; the control node rotates
+  // it 90 degrees clockwise before policy inference.
+  bool publish_origin_camera=false;
+  int origin_out_w=36, origin_out_h=48;
+  float origin_hfov=45.2f, origin_vfov=58.0616969f;
+  float origin_min_dist=0.2f, origin_max_dist=3.0f;
+
   int decimation=1; float min_dist=0.25f, max_dist=5.0f;
   float spat_alpha=0.6f, spat_delta=20.0f; int spat_holes=2;
   int temp_holes=4;
@@ -136,6 +144,8 @@ int main(int argc,char** argv){
   std::string topic_depth_info="/camera/depth/camera_info";
   std::string topic_small="/camera/depth/image_87x58";
   std::string topic_small_info="/camera/depth/camera_info_87x58";
+  std::string topic_origin="/camera/depth/image_36x48";
+  std::string topic_origin_info="/camera/depth/camera_info_36x48";
   std::string topic_color="/camera/color/image_raw";
   std::string topic_ir1="/camera/infra1/image_raw";
   std::string topic_ir2="/camera/infra2/image_raw";
@@ -158,6 +168,13 @@ int main(int argc,char** argv){
   declare_and_get(node, "hfov", hfov);
   declare_and_get(node, "vfov", vfov);
   declare_and_get(node, "publish_full", publish_full);
+  declare_and_get(node, "publish_origin_camera", publish_origin_camera);
+  declare_and_get(node, "origin_out_w", origin_out_w);
+  declare_and_get(node, "origin_out_h", origin_out_h);
+  declare_and_get(node, "origin_hfov", origin_hfov);
+  declare_and_get(node, "origin_vfov", origin_vfov);
+  declare_and_get(node, "origin_min_dist", origin_min_dist);
+  declare_and_get(node, "origin_max_dist", origin_max_dist);
 
   declare_and_get(node, "decimation", decimation);
   declare_and_get(node, "min_dist", min_dist);
@@ -177,6 +194,8 @@ int main(int argc,char** argv){
   declare_and_get(node, "topic_depth_info", topic_depth_info);
   declare_and_get(node, "topic_small", topic_small);
   declare_and_get(node, "topic_small_info", topic_small_info);
+  declare_and_get(node, "topic_origin", topic_origin);
+  declare_and_get(node, "topic_origin_info", topic_origin_info);
   declare_and_get(node, "topic_color", topic_color);
   declare_and_get(node, "topic_ir1", topic_ir1);
   declare_and_get(node, "topic_ir2", topic_ir2);
@@ -188,6 +207,12 @@ int main(int argc,char** argv){
   auto pub_depth_info = node->create_publisher<sensor_msgs::msg::CameraInfo>(topic_depth_info, 1);
   auto pub_small      = node->create_publisher<sensor_msgs::msg::Image>(topic_small, 1);
   auto pub_small_info = node->create_publisher<sensor_msgs::msg::CameraInfo>(topic_small_info, 1);
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_origin;
+  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr pub_origin_info;
+  if (publish_origin_camera) {
+    pub_origin = node->create_publisher<sensor_msgs::msg::Image>(topic_origin, 1);
+    pub_origin_info = node->create_publisher<sensor_msgs::msg::CameraInfo>(topic_origin_info, 1);
+  }
 
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_color;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub_ir1;
@@ -232,6 +257,10 @@ int main(int argc,char** argv){
   uint16_t max_u = static_cast<uint16_t>(std::lround(max_dist / depth_scale));
   if (max_u == 0) max_u = 1;
   if (max_u < min_u) std::swap(max_u, min_u);
+  uint16_t origin_min_u = static_cast<uint16_t>(std::lround(origin_min_dist / depth_scale));
+  uint16_t origin_max_u = static_cast<uint16_t>(std::lround(origin_max_dist / depth_scale));
+  if (origin_max_u == 0) origin_max_u = 1;
+  if (origin_max_u < origin_min_u) std::swap(origin_max_u, origin_min_u);
 
   try {
     for (auto& s : profile.get_device().query_sensors()) {
@@ -411,6 +440,81 @@ int main(int argc,char** argv){
         RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 5000,
                              "FOV(small): w=%d h=%d  fx=%.2f fy=%.2f  ROI=%dx%d@(%d,%d)  ->  HFOV=%.2f deg, VFOV=%.2f deg",
                              out_w, out_h, fx, fy, cw, ch, x0, y0, hfov_small, vfov_small);
+
+        if (publish_origin_camera) {
+          // The sensor is mounted 90 degrees from the MuJoCo camera frame.
+          // Before the control node's clockwise rotation, the FOV axes must be
+          // swapped: H=45.2 and V=58.0617.  After rotation this becomes the
+          // origin_depth_cam render: shape=(36, 48), H=58.0617, V=45.2.
+          const double ORIGIN_HFOV_T_deg = origin_hfov;
+          const double ORIGIN_VFOV_T_deg = origin_vfov;
+          const double ORIGIN_HFOV_T = ORIGIN_HFOV_T_deg * M_PI / 180.0;
+          const double ORIGIN_VFOV_T = ORIGIN_VFOV_T_deg * M_PI / 180.0;
+          const double origin_r_out = double(origin_out_w) / double(origin_out_h);
+
+          int origin_cw0 = (int)std::round(2.0 * fxF * std::tan(ORIGIN_HFOV_T / 2.0));
+          int origin_ch0 = (int)std::round(2.0 * fyF * std::tan(ORIGIN_VFOV_T / 2.0));
+
+          int origin_cwA = (int)std::round(origin_ch0 * origin_r_out);
+          int origin_chA = origin_ch0;
+          clamp_roi(origin_cwA, origin_chA);
+          int origin_cwB = origin_cw0;
+          int origin_chB = (int)std::round(origin_cw0 / origin_r_out);
+          clamp_roi(origin_cwB, origin_chB);
+
+          auto origin_fov_err = [&](int roi_w, int roi_h){
+            double roi_hfov = 2.0 * std::atan(double(roi_w) / (2.0 * fxF));
+            double roi_vfov = 2.0 * std::atan(double(roi_h) / (2.0 * fyF));
+            return std::abs(roi_hfov - ORIGIN_HFOV_T) +
+                   std::abs(roi_vfov - ORIGIN_VFOV_T);
+          };
+          double origin_errA = origin_fov_err(origin_cwA, origin_chA);
+          double origin_errB = origin_fov_err(origin_cwB, origin_chB);
+          int origin_cw = (origin_errA <= origin_errB ? origin_cwA : origin_cwB);
+          int origin_ch = (origin_errA <= origin_errB ? origin_chA : origin_chB);
+          int origin_x0 = (w0 - origin_cw) / 2;
+          int origin_y0 = (h0 - origin_ch) / 2;
+
+          const uint16_t* origin_roi = in_ptr + origin_y0 * in_stride_px + origin_x0;
+          std::vector<uint16_t> origin_buf(size_t(origin_out_w) * origin_out_h);
+          resizeNN16U(origin_roi, origin_cw, origin_ch, in_stride_px,
+                      origin_buf.data(), origin_out_w, origin_out_h);
+
+          for (uint16_t& z : origin_buf) {
+            if (z != 0) {
+              if (z < origin_min_u) z = origin_min_u;
+              else if (z > origin_max_u) z = origin_max_u;
+            }
+          }
+
+          sensor_msgs::msg::Image origin_img;
+          origin_img.header.stamp=stamp; origin_img.header.frame_id=frame_depth;
+          origin_img.width=origin_out_w; origin_img.height=origin_out_h;
+          origin_img.encoding=sensor_msgs::image_encodings::TYPE_16UC1;
+          origin_img.is_bigendian=false; origin_img.step=origin_out_w*2;
+          origin_img.data.resize(size_t(origin_img.step)*origin_out_h);
+          std::memcpy(origin_img.data.data(), origin_buf.data(), origin_img.data.size());
+          pub_origin->publish(origin_img);
+
+          double origin_fx = fxF * double(origin_out_w) / double(origin_cw);
+          double origin_fy = fyF * double(origin_out_h) / double(origin_ch);
+          double origin_cx = (cxF - origin_x0) * double(origin_out_w) / double(origin_cw);
+          double origin_cy = (cyF - origin_y0) * double(origin_out_h) / double(origin_ch);
+
+          sensor_msgs::msg::CameraInfo origin_info;
+          origin_info.header = origin_img.header;
+          fillCameraInfo(origin_info, origin_out_w, origin_out_h,
+                         origin_fx, origin_fy, origin_cx, origin_cy);
+          pub_origin_info->publish(origin_info);
+
+          double origin_hfov_actual = 2.0 * std::atan(double(origin_out_w) / (2.0 * origin_fx)) * 180.0 / M_PI;
+          double origin_vfov_actual = 2.0 * std::atan(double(origin_out_h) / (2.0 * origin_fy)) * 180.0 / M_PI;
+          RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 5000,
+                               "FOV(origin pre-rotation): w=%d h=%d  ROI=%dx%d@(%d,%d) -> HFOV=%.4f deg, VFOV=%.4f deg; after CW rotation -> shape=(%d, %d), HFOV=%.4f deg, VFOV=%.4f deg",
+                               origin_out_w, origin_out_h, origin_cw, origin_ch, origin_x0, origin_y0,
+                               origin_hfov_actual, origin_vfov_actual,
+                               origin_out_w, origin_out_h, origin_vfov_actual, origin_hfov_actual);
+        }
       }
 
       if (enable_color) {

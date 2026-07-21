@@ -25,7 +25,7 @@ from ament_index_python.packages import get_package_share_directory
 from bxi_example_py_elf3.inference.beyondmimic import *
 from bxi_example_py_elf3.inference.normal import *
 from bxi_example_py_elf3.inference.amp import *
-from bxi_example_py_elf3.inference.amp_depth import HumanoidGaitDepthPolicyIsaaclab
+from bxi_example_py_elf3.inference.amp_depth import HumanoidGaitDepthPolicyIsaaclab,HumanoidGaitOriginCameraPolicyIsaaclab
 from bxi_example_py_elf3.utils.hot_reload import HotReloadMixin
 from bxi_example_py_elf3.utils.state_machine import (
     RobotStateMachine,
@@ -287,6 +287,11 @@ class BxiExample(HotReloadMixin, Node):
         self.normal_depth: HumanoidGaitDepthPolicyIsaaclab = (
             HumanoidGaitDepthPolicyIsaaclab(
                 model_file("isaaclab_model/normal_depth.onnx")
+            )
+        )
+        self.normal_depth_origin: HumanoidGaitOriginCameraPolicyIsaaclab = (
+            HumanoidGaitOriginCameraPolicyIsaaclab(
+                model_file("isaaclab_model/dagger2.onnx")
             )
         )
         self.model_file_paths: tuple[str, ...] = tuple(model_file_paths)
