@@ -239,6 +239,12 @@ controls:
       - -0.118
       idle:
       - -0.117
+      - 0.114
+      lstick:
+      - 0.115
+      - 0.351
+      rstick:
+      - 0.352
       - 1.0
   crsf.button_group_b:
     type: enum
@@ -278,13 +284,13 @@ controls:
     type: bool
     inputs:
     - when:
-      - crsf.button_group_b=back
+      - crsf.button_group_b=start
       value: true
   crsf.start_event:
     type: bool
     inputs:
     - when:
-      - crsf.button_group_b=start
+      - crsf.button_group_a=rstick
       value: true
   crsf.lb_event:
     type: bool
