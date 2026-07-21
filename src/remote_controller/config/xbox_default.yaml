@@ -186,6 +186,7 @@ controls:
       value: -1.0
     min: -1.0
     max: 1.0
+    alpha: 0.05
   gamepad.stop_event:
     type: bool
     inputs:
