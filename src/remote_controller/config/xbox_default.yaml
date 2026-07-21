@@ -20,14 +20,14 @@ sources:
         from: crsf.channel.3
       crsf.right_x:
         from: crsf.channel.4
-      crsf.button_group_a:
-        from: crsf.channel.5
-      crsf.trigger_left:
-        from: crsf.channel.6
       crsf.right_y:
+        from: crsf.channel.6
+      crsf.trigger_left:
         from: crsf.channel.7
-      crsf.button_group_b:
+      crsf.button_group_a:
         from: crsf.channel.8
+      crsf.button_group_b:
+        from: crsf.channel.9
   gamepad:
     type: joystick
     device: /dev/input/jsBattleDragon
