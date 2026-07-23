@@ -41,33 +41,30 @@ remote_events:
   hello_event:
     slot: btn_10
     value: 6
+default_transition: instant
 transition_profiles:
   instant:
-    duration: 0.0
-    exit_behavior: none
-    enter_behavior: none
+    type: instant
   soft_switch:
+    type: hold
     duration: 0.02
-    exit_behavior: hold_last_motor
-    enter_behavior: hold_last_motor
   first_frame_switch:
-    exit_duration: 0.02
-    enter_duration: 0.1
-    exit_behavior: hold_last_motor
-    enter_behavior: first_frame_ramp_kp
-    data:
-      kp_start: zero
-      kd_start: target
+    type: sequence
+    steps:
+    - type: hold
+      duration: 0.02
+    - type: entry_gain_ramp
+      duration: 1.0
+      kp_from: zero
+      kd_from: target
   dual_running_blend:
+    type: running_blend
     duration: 0.3
-    exit_behavior: none
-    enter_behavior: dual_running_blend
-    data:
-      curve: smoothstep
-      run_from: true
-      run_to: true
-      from_fallback: last_motor
-      to_fallback: first_frame
+    curve: smoothstep
+    sample_from: true
+    sample_to: true
+    advance_from: false
+    advance_to: false
 speed_profiles:
   normal:
     vx_scale: 1.0
@@ -101,14 +98,10 @@ states:
         zero_torque_event: zero_torque
         pd_brake_event:
           to: pd_brake
-          transition:
-            base: first_frame_switch
-            enter_duration: 1.0
+          transition: first_frame_switch
         initial_pos_event:
           to: initial_pos
-          transition:
-            base: first_frame_switch
-            enter_duration: 1.0
+          transition: first_frame_switch
         amp_run_event:
           to: amp_run
           transition: soft_switch
@@ -138,14 +131,10 @@ states:
       on_event:
         pd_brake_event:
           to: pd_brake
-          transition:
-            base: first_frame_switch
-            enter_duration: 1.0
+          transition: first_frame_switch
         initial_pos_event:
           to: initial_pos
-          transition:
-            base: first_frame_switch
-            enter_duration: 1.0
+          transition: first_frame_switch
   pd_brake:
     manifest:
       label: 初始姿态
@@ -161,14 +150,10 @@ states:
         zero_torque_event: zero_torque
         initial_pos_event:
           to: initial_pos
-          transition:
-            base: first_frame_switch
-            enter_duration: 1.0
+          transition: first_frame_switch
         recover_event:
           to: recover
-          transition:
-            base: first_frame_switch
-            enter_duration: 1.0
+          transition: first_frame_switch
   initial_pos:
     manifest:
       label: 零位模式
@@ -180,9 +165,7 @@ states:
       on_event:
         pd_brake_event:
           to: pd_brake
-          transition:
-            base: first_frame_switch
-            enter_duration: 1.0
+          transition: first_frame_switch
         zero_torque_event: zero_torque
   dance:
     manifest:
@@ -198,7 +181,7 @@ states:
         normal_event:
           to: normal
           transition:
-            base: dual_running_blend
+            profile: dual_running_blend
             duration: 1.0
         zero_torque_event: zero_torque
         toggle_dance_pause_event:
@@ -270,7 +253,7 @@ states:
         normal_event:
           to: normal
           transition:
-            base: dual_running_blend
+            profile: dual_running_blend
             duration: 1.0
         toggle_dance_pause_event:
           action: toggle_dance_pause
@@ -287,7 +270,7 @@ states:
         normal_event:
           to: normal
           transition:
-            base: dual_running_blend
+            profile: dual_running_blend
             duration: 1.0
         toggle_dance_pause_event:
           action: toggle_dance_pause
