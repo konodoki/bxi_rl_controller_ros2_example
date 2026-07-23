@@ -1,0 +1,20 @@
+schema: 1
+id: com.bxi.lie_down
+version: 1.0.0
+api: 1
+entrypoint: plugin:create_mod
+events:
+  activate: {slot: btn_10, value: 7}
+  toggle_pause: {slot: btn_9, value: 1}
+states:
+  lie_down:
+    manifest:
+      label: 躺下
+      index: 14
+      group: Advanced
+      icon: rotate_right
+      confirm: true
+      confirm_message: 请确保机器人前方3米范围内没有障碍物
+routes:
+  - {from: com.bxi.normal/normal, event: activate, to: lie_down, transition: soft_switch}
+  - {from: lie_down, event: toggle_pause, action: toggle_pause}

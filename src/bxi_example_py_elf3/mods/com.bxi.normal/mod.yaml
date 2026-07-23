@@ -1,0 +1,30 @@
+schema: 1
+id: com.bxi.normal
+version: 1.0.0
+api: 1
+entrypoint: plugin:create_mod
+requires:
+  - id: com.bxi.normal_policy
+    version: ">=1,<2"
+events:
+  activate: {slot: btn_1, value: 1}
+speed_profiles:
+  normal:
+    vx_scale: 1.0
+    vx_min: -1.0
+    vx_max: 1.0
+    vy_scale: 0.5
+    yaw_scale: 1.5
+states:
+  normal:
+    manifest:
+      label: 走路
+      index: 0
+      group: Base
+      icon: directions_walk
+    speed_profile: normal
+routes:
+  - from: com.bxi.pd_brake/pd_brake
+    event: activate
+    to: normal
+    transition: soft_switch

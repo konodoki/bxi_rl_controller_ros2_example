@@ -1,0 +1,6 @@
+schema: 1
+id: com.bxi.normal_policy
+version: 1.0.0
+api: 1
+entrypoint: plugin:create_mod
+states: {}
