@@ -18,8 +18,8 @@ class LieDownState(MotionReplayState[DanceMotionPolicyGravityIsaaclabV2]):
             name,
             state_id,
             policy,
-            finish_trigger="forward_flip_finished",
-            end_frame_trim=125,
+            finish_trigger="lie_down_finished",
+            end_frame_trim=200,
             end_transition={
                 "profile": "dual_running_blend",
                 "duration": 1.0,
