@@ -1,11 +1,17 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from bxi_example_py_elf3.inference.beyondmimic import DanceMotionPolicyGravityIsaaclabV2
 from bxi_example_py_elf3.utils.mod_system import ResourceHandle
 from bxi_example_py_elf3.utils.state_library import MotionReplayState
 
+if TYPE_CHECKING:
+    from bxi_example_py_elf3.bxi_example_demo import BxiExample
 
-from bxi_example_py_elf3.bxi_example_demo import BxiExample
 
-PD_BRAKE_STATE = "com.bxi.pd_brake/pd_brake"
+PD_BRAKE_STATE = "com.bxi.basic_actions/pd_brake"
+
 
 class LieDownState(MotionReplayState[DanceMotionPolicyGravityIsaaclabV2]):
     def __init__(
@@ -27,6 +33,7 @@ class LieDownState(MotionReplayState[DanceMotionPolicyGravityIsaaclabV2]):
                 "sample_from": True,
             },
         )
+
     def on_update(self, ctx: BxiExample, dt: float) -> None:
         policy = self.policy
         self._apply_frame(ctx, self.sample_running_frame(ctx, dt, advance=True))
