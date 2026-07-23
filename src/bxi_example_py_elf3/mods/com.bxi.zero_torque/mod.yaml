@@ -1,0 +1,18 @@
+schema: 1
+id: com.bxi.zero_torque
+version: 1.0.0
+api: 1
+entrypoint: plugin:create_mod
+events:
+  activate: {slot: btn_2, value: 1}
+states:
+  zero_torque:
+    manifest:
+      label: 零力矩
+      index: 1
+      group: Base
+      icon: do_not_disturb_on
+routes:
+  - {from: com.bxi.normal/normal, event: activate, to: zero_torque}
+  - {from: com.bxi.pd_brake/pd_brake, event: activate, to: zero_torque}
+  - {from: com.bxi.initial_pos/initial_pos, event: activate, to: zero_torque}

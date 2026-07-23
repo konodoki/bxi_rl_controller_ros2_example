@@ -1,0 +1,18 @@
+schema: 1
+id: com.bxi.initial_pos
+version: 1.0.0
+api: 1
+entrypoint: plugin:create_mod
+events:
+  activate: {slot: btn_4, value: 1}
+states:
+  initial_pos:
+    manifest:
+      label: 零位模式
+      index: 4
+      group: Base
+      icon: anchor
+routes:
+  - {from: com.bxi.normal/normal, event: activate, to: initial_pos, transition: first_frame_switch}
+  - {from: com.bxi.zero_torque/zero_torque, event: activate, to: initial_pos, transition: first_frame_switch}
+  - {from: com.bxi.pd_brake/pd_brake, event: activate, to: initial_pos, transition: first_frame_switch}

@@ -1,0 +1,26 @@
+schema: 1
+id: com.bxi.hello
+version: 1.0.0
+api: 1
+entrypoint: plugin:create_mod
+requires:
+  - id: com.bxi.withoutarm_policy
+    version: ">=1,<2"
+events:
+  activate: {slot: btn_10, value: 6}
+  toggle_pause: {slot: btn_9, value: 1}
+states:
+  hello:
+    manifest:
+      label: 挥手
+      index: 13
+      group: Base
+      icon: waving_hand
+    speed_profile: com.bxi.normal/normal
+routes:
+  - {from: com.bxi.normal/normal, event: activate, to: hello, transition: dual_running_blend}
+  - from: hello
+    event: com.bxi.normal/activate
+    to: com.bxi.normal/normal
+    transition: {profile: dual_running_blend, duration: 1.0}
+  - {from: hello, event: toggle_pause, action: toggle_pause}
