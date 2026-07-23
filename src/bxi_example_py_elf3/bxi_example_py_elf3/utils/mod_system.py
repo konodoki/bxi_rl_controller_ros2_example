@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field, fields, is_dataclass
 import hashlib
 import importlib.util
 from itertools import count
 from pathlib import Path
 import re
 import sys
-from types import ModuleType
-from typing import Generic, TypeVar, cast
+import warnings
+from types import ModuleType, UnionType
+from typing import Generic, TypeVar, Union, cast, get_args, get_origin, get_type_hints
 
 import yaml
 
@@ -24,6 +25,7 @@ from bxi_example_py_elf3.utils.transition_core import (
 
 ResourceT = TypeVar("ResourceT")
 ParamT = TypeVar("ParamT")
+ParamsT = TypeVar("ParamsT")
 ResourceFactory = Callable[["ResourceLoadContext"], ResourceT]
 StateFactory = Callable[["StateBuildContext"], RobotControlState]
 ConfigMap = dict[str, object]
@@ -198,6 +200,39 @@ class StateBuildContext:
                 f"state '{self.name}' param '{name}' must be " f"{expected.__name__}"
             )
         return value
+
+    def dataclass_params(self, params_type: type[ParamsT]) -> ParamsT:
+        """Build a typed parameter object while retaining strict YAML validation."""
+        if not isinstance(params_type, type) or not is_dataclass(params_type):
+            raise TypeError("dataclass_params() expects a dataclass type")
+        try:
+            annotations = get_type_hints(params_type)
+        except (NameError, TypeError) as exc:
+            raise TypeError(
+                f"state '{self.name}' cannot resolve annotations for "
+                f"{params_type.__name__}: {exc}"
+            ) from exc
+
+        values: dict[str, object] = {}
+        for parameter in fields(params_type):
+            name = parameter.name
+            self._consumed.add(name)
+            if name not in self.params:
+                if (
+                    parameter.default is MISSING
+                    and parameter.default_factory is MISSING
+                ):
+                    raise ValueError(
+                        f"state '{self.name}' is missing required param '{name}'"
+                    )
+                continue
+            values[name] = _typed_dataclass_value(
+                self.name,
+                name,
+                self.params[name],
+                annotations.get(name, parameter.type),
+            )
+        return params_type(**values)
 
     def finish(self) -> None:
         unknown = set(self.params) - self._consumed
@@ -402,7 +437,7 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
         manifests.extend(root.rglob("mod.yaml"))
         for manifest_path in sorted(set(manifests)):
             manifest = _yaml_mapping(manifest_path)
-            schema = manifest.get("schema")
+            schema = manifest.get("schema", 1)
             if schema != 1:
                 raise ValueError(f"{manifest_path}: unsupported Mod schema {schema!r}")
             mod_id = _required_string(manifest, "id", manifest_path)
@@ -412,7 +447,7 @@ def _discover_mods(roots: Sequence[Path]) -> dict[str, _DiscoveredMod]:
                 )
             version = _required_string(manifest, "version", manifest_path)
             _version_tuple(version)
-            api = manifest.get("api")
+            api = manifest.get("api", 1)
             if api != 1:
                 raise ValueError(f"{manifest_path}: unsupported Mod API {api!r}")
             requires = _read_requirements(manifest.get("requires"), manifest_path)
@@ -554,7 +589,20 @@ def _load_definition(
     mod: _DiscoveredMod,
     resources: ResourceManager,
 ) -> tuple[ModDefinition, ModuleType]:
-    entrypoint = _required_string(mod.manifest, "entrypoint", mod.manifest_path)
+    entrypoint_value = mod.manifest.get("entrypoint")
+    if entrypoint_value is None and (mod.root / "plugin.py").is_file():
+        entrypoint_value = "plugin:create_mod"
+    if entrypoint_value is None:
+        package = _create_dynamic_package(mod)
+        try:
+            definition = _load_convention_definition(mod, package)
+        except Exception:
+            _remove_module_prefixes((package.__name__,))
+            raise
+        return definition, package
+    if not isinstance(entrypoint_value, str) or not entrypoint_value:
+        raise ValueError(f"{mod.manifest_path}: entrypoint must be a string")
+    entrypoint = entrypoint_value
     module_name, separator, function_name = entrypoint.partition(":")
     if not separator or not module_name or not function_name:
         raise ValueError(
@@ -568,16 +616,26 @@ def _load_definition(
         or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", function_name)
     ):
         raise ValueError(f"{mod.manifest_path}: invalid entrypoint '{entrypoint}'")
-    relative_module = Path(*module_name.split("."))
-    module_file = mod.root / relative_module.with_suffix(".py")
-    if not module_file.is_file():
-        package_file = mod.root / relative_module / "__init__.py"
-        if not package_file.is_file():
-            raise FileNotFoundError(
-                f"{mod.manifest_path}: entrypoint module does not exist: {module_name}"
+    package = _create_dynamic_package(mod)
+    try:
+        module = _load_mod_module(mod, package, module_name)
+        factory = getattr(module, function_name, None)
+        if not callable(factory):
+            raise TypeError(
+                f"{mod.manifest_path}: entrypoint is not callable: {entrypoint}"
             )
-        module_file = package_file
+        definition = factory(ModLoadContext(mod.id, mod.root, resources))
+        if not isinstance(definition, ModDefinition):
+            raise TypeError(
+                f"{mod.manifest_path}: entrypoint must return ModDefinition"
+            )
+    except Exception:
+        _remove_module_prefixes((package.__name__,))
+        raise
+    return definition, package
 
+
+def _create_dynamic_package(mod: _DiscoveredMod) -> ModuleType:
     generation = max(
         (path.stat().st_mtime_ns for path in mod.root.rglob("*") if path.is_file()),
         default=0,
@@ -591,34 +649,103 @@ def _load_definition(
     package.__path__ = [str(mod.root)]  # type: ignore[attr-defined]
     package.__package__ = package_name
     sys.modules[package_name] = package
-    full_name = f"{package_name}.{module_name}"
-    spec = importlib.util.spec_from_file_location(full_name, module_file)
+    return package
+
+
+def _load_mod_module(
+    mod: _DiscoveredMod,
+    package: ModuleType,
+    module_name: str,
+) -> ModuleType:
+    if not re.fullmatch(
+        r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*",
+        module_name,
+    ):
+        raise ValueError(f"{mod.manifest_path}: invalid module name '{module_name}'")
+    full_name = f"{package.__name__}.{module_name}"
+    loaded = sys.modules.get(full_name)
+    if loaded is not None:
+        return loaded
+    relative_module = Path(*module_name.split("."))
+    module_file = mod.root / relative_module.with_suffix(".py")
+    submodule_search_locations = None
+    if not module_file.is_file():
+        module_file = mod.root / relative_module / "__init__.py"
+        if not module_file.is_file():
+            raise FileNotFoundError(
+                f"{mod.manifest_path}: module does not exist: {module_name}"
+            )
+        submodule_search_locations = [str(module_file.parent)]
+    spec = importlib.util.spec_from_file_location(
+        full_name,
+        module_file,
+        submodule_search_locations=submodule_search_locations,
+    )
     if spec is None or spec.loader is None:
-        _remove_module_prefixes((package_name,))
-        raise RuntimeError(f"cannot load Mod entrypoint: {module_file}")
+        raise RuntimeError(f"cannot load Mod module: {module_file}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[full_name] = module
+    previous_bytecode_setting = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
     try:
-        previous_bytecode_setting = sys.dont_write_bytecode
-        sys.dont_write_bytecode = True
-        try:
-            spec.loader.exec_module(module)
-        finally:
-            sys.dont_write_bytecode = previous_bytecode_setting
-        factory = getattr(module, function_name, None)
-        if not callable(factory):
-            raise TypeError(
-                f"{mod.manifest_path}: entrypoint is not callable: {entrypoint}"
-            )
-        definition = factory(ModLoadContext(mod.id, mod.root, resources))
-        if not isinstance(definition, ModDefinition):
-            raise TypeError(
-                f"{mod.manifest_path}: entrypoint must return ModDefinition"
-            )
+        spec.loader.exec_module(module)
     except Exception:
-        _remove_module_prefixes((package_name,))
+        sys.modules.pop(full_name, None)
         raise
-    return definition, module
+    finally:
+        sys.dont_write_bytecode = previous_bytecode_setting
+    return module
+
+
+def _load_convention_definition(
+    mod: _DiscoveredMod,
+    package: ModuleType,
+) -> ModDefinition:
+    raw_states = _mapping(mod.manifest.get("states"), f"{mod.id}.states")
+    factories: dict[str, StateFactory] = {}
+    for local_name, raw_state in raw_states.items():
+        state_config = _mapping(raw_state, f"{mod.id}.states.{local_name}")
+        reference = state_config.get("factory")
+        if not isinstance(reference, str):
+            raise ValueError(
+                f"{mod.manifest_path}: state '{local_name}' needs "
+                "factory: module:Class when no entrypoint is used"
+            )
+        module_name, separator, class_name = reference.partition(":")
+        if (
+            not separator
+            or not class_name
+            or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", class_name)
+        ):
+            raise ValueError(
+                f"{mod.manifest_path}: state '{local_name}' factory must look "
+                "like 'state:WaveState'"
+            )
+        module = _load_mod_module(mod, package, module_name)
+        state_type = getattr(module, class_name, None)
+        if not isinstance(state_type, type) or not issubclass(
+            state_type, RobotControlState
+        ):
+            raise TypeError(
+                f"{mod.manifest_path}: factory '{reference}' must name a "
+                "RobotControlState class"
+            )
+        factories[local_name] = _convention_state_factory(state_type)
+    return ModDefinition(state_factories=factories)
+
+
+def _convention_state_factory(
+    state_type: type[RobotControlState],
+) -> StateFactory:
+    params_type = getattr(state_type, "Params", None)
+
+    def build(context: StateBuildContext) -> RobotControlState:
+        if params_type is None:
+            return state_type(context.name, context.state_id)
+        params = context.dataclass_params(params_type)
+        return state_type(context.name, context.state_id, params)
+
+    return build
 
 
 def _remove_module_prefixes(prefixes: Sequence[str]) -> None:
@@ -687,6 +814,11 @@ def _compose_config(
             _validate_local_name(mod.id, local_name, "state")
             canonical = _qualify(mod.id, local_name)
             state_config = dict(_mapping(raw_state, f"{mod.id}.states.{local_name}"))
+            state_config.pop("factory", None)
+            _normalize_state_manifest_shorthand(
+                state_config,
+                f"{mod.id}.states.{local_name}",
+            )
             speed_profile = state_config.get("speed_profile")
             if isinstance(speed_profile, str) and "/" not in speed_profile:
                 state_config["speed_profile"] = _qualify(mod.id, speed_profile)
@@ -773,7 +905,7 @@ def _compose_config(
     config["speed_profiles"] = speed_profiles
     config["transition_profiles"] = transition_profiles
     _validate_remote_inputs(states, remote_events)
-    _validate_state_manifest_indexes(states)
+    _resolve_state_manifest_indexes(states)
     for state_name, raw_state in states.items():
         state = cast(Mapping[str, object], raw_state)
         speed_profile = state.get("speed_profile")
@@ -866,8 +998,13 @@ def _validate_remote_inputs(
         raise ValueError(f"remote events have no routes: {unused}")
 
 
-def _validate_state_manifest_indexes(states: Mapping[str, object]) -> None:
-    owners: dict[int, str] = {}
+def _resolve_state_manifest_indexes(states: Mapping[str, object]) -> None:
+    declared_indexes: set[int] = set()
+    indexed_states: list[tuple[str, dict[str, object], Mapping[str, object], int]] = []
+
+    # Validate and reserve every explicitly declared index before assigning new
+    # ones. This prevents an earlier conflict from taking an index that a later
+    # state legitimately declares.
     for state_name, raw_state in states.items():
         state = _mapping(raw_state, f"states.{state_name}")
         manifest = _mapping(state.get("manifest"), f"states.{state_name}.manifest")
@@ -878,13 +1015,61 @@ def _validate_state_manifest_indexes(states: Mapping[str, object]) -> None:
             raise ValueError(
                 f"state '{state_name}' manifest index must be a non-negative integer"
             )
+        indexed_states.append(
+            (state_name, cast(dict[str, object], state), manifest, index)
+        )
+        declared_indexes.add(index)
+
+    owners: dict[int, str] = {}
+    allocated_indexes = set(declared_indexes)
+    for state_name, state, manifest, index in indexed_states:
         previous = owners.get(index)
-        if previous is not None:
+        if previous is None:
+            owners[index] = state_name
+            continue
+
+        new_index = index + 1
+        while new_index in allocated_indexes:
+            new_index += 1
+        allocated_indexes.add(new_index)
+        owners[new_index] = state_name
+        updated_manifest = dict(manifest)
+        updated_manifest["index"] = new_index
+        state["manifest"] = updated_manifest
+        warnings.warn(
+            f"state manifest index conflict: '{previous}' keeps index {index}; "
+            f"'{state_name}' was reassigned to index {new_index}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
+_STATE_MANIFEST_FIELDS = (
+    "label",
+    "index",
+    "group",
+    "icon",
+    "confirm",
+    "confirm_message",
+)
+
+
+def _normalize_state_manifest_shorthand(
+    state: dict[str, object],
+    context: str,
+) -> None:
+    manifest = dict(_mapping(state.get("manifest"), f"{context}.manifest"))
+    for name in _STATE_MANIFEST_FIELDS:
+        if name not in state:
+            continue
+        value = state.pop(name)
+        if name in manifest and manifest[name] != value:
             raise ValueError(
-                f"state manifest index conflict: '{previous}' and '{state_name}' "
-                f"both use index {index}"
+                f"{context} declares conflicting '{name}' shorthand and manifest values"
             )
-        owners[index] = state_name
+        manifest[name] = value
+    if manifest or "manifest" in state:
+        state["manifest"] = manifest
 
 
 def _qualify(mod_id: str, local_or_canonical: str) -> str:
@@ -970,6 +1155,63 @@ def _version_tuple(version: str) -> tuple[int, ...]:
     if not re.fullmatch(r"\d+(?:\.\d+)*", version):
         raise ValueError(f"Mod versions must be numeric dot versions: {version!r}")
     return tuple(int(part) for part in version.split("."))
+
+
+def _typed_dataclass_value(
+    state_name: str,
+    parameter_name: str,
+    value: object,
+    annotation: object,
+) -> object:
+    origin = get_origin(annotation)
+    arguments = get_args(annotation)
+    if origin in (Union, UnionType):
+        allows_none = type(None) in arguments
+        candidates = tuple(item for item in arguments if item is not type(None))
+        if value is None and allows_none:
+            return None
+        if len(candidates) == 1:
+            return _typed_dataclass_value(
+                state_name,
+                parameter_name,
+                value,
+                candidates[0],
+            )
+        raise TypeError(
+            f"state '{state_name}' param '{parameter_name}' uses unsupported "
+            f"union annotation {annotation!r}"
+        )
+
+    expected = annotation
+    valid = False
+    converted = value
+    expected_name = getattr(expected, "__name__", repr(expected))
+    if expected is float:
+        valid = not isinstance(value, bool) and isinstance(value, (int, float))
+        if valid:
+            converted = float(cast(float, value))
+        expected_name = "a number"
+    elif expected is int:
+        valid = not isinstance(value, bool) and isinstance(value, int)
+        expected_name = "an integer"
+    elif expected is bool:
+        valid = isinstance(value, bool)
+        expected_name = "a boolean"
+    elif expected is str:
+        valid = isinstance(value, str)
+        expected_name = "a string"
+    elif isinstance(expected, type):
+        valid = isinstance(value, expected)
+    else:
+        raise TypeError(
+            f"state '{state_name}' param '{parameter_name}' uses unsupported "
+            f"annotation {annotation!r}"
+        )
+    if not valid:
+        raise ValueError(
+            f"state '{state_name}' param '{parameter_name}' must be {expected_name}"
+        )
+    return converted
 
 
 def _yaml_mapping(path: Path) -> Mapping[str, object]:

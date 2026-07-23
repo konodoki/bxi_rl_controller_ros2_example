@@ -1,6 +1,0 @@
-schema: 1
-id: com.bxi.withoutarm_policy
-version: 1.0.0
-api: 1
-entrypoint: plugin:create_mod
-states: {}
