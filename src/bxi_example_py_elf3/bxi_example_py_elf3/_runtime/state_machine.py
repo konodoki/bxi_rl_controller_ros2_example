@@ -657,6 +657,28 @@ class RobotStateMachine:
         return cycles
 
     def _graph_snapshot(self) -> dict[str, object]:
+        edges = self._graph_edges()
+
+        # 当前状态机信息消费者的兼容性过滤器：
+        #下游当前将每个graph.remote_events条目变成
+        # 状态选择按钮。  仅操作规则没有目标状态并且
+        # 因此没有状态名称/标签/组附加到该按钮。  保留
+        # 这些规则在运行时在 self._rules 中完全活跃，但在运行时忽略它们
+        # 已发布的状态图，因此它们不会呈现为虚假状态。
+        #
+        # TODO(protocol): 当消费者支持作为一流线路的操作时
+        # 概念，单独发布这些规则（例如graph.actions）
+        # 而不是从此兼容性快照中过滤它们。
+        published_edges = [edge for edge in edges if edge[1] is not None]
+        published_event_names = {
+            rule.event
+            for _, _, _, rule in published_edges
+            if rule.event is not None
+        }
+        configured_remote_events = self._mapping(
+            self._config.get("remote_events"), "remote_events"
+        )
+
         return {
             "states": [
                 {
@@ -671,9 +693,11 @@ class RobotStateMachine:
                 name: transition.plan.snapshot()
                 for name, transition in self._profiles.items()
             },
-            "remote_events": dict(
-                self._mapping(self._config.get("remote_events"), "remote_events")
-            ),
+            "remote_events": {
+                name: config
+                for name, config in configured_remote_events.items()
+                if name in published_event_names
+            },
             "transitions": [
                 {
                     "from": source,
@@ -692,7 +716,7 @@ class RobotStateMachine:
                         else self._default_transition.plan.snapshot()
                     ),
                 }
-                for source, target, label, rule in self._graph_edges()
+                for source, target, label, rule in published_edges
             ],
         }
 
