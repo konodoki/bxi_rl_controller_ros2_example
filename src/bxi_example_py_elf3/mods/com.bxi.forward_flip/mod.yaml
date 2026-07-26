@@ -1,11 +1,17 @@
 schema: 1
 id: com.bxi.forward_flip
+name: 前空翻
 version: 1.0.0
 api: 1
+enable: true
 entrypoint: plugin:create_mod
+visibility: public
 requires:
   - id: com.bxi.basic_actions
     version: ">=1,<2"
+conflicts: []
+python_exports: []
+
 events:
   activate: {slot: btn_10, value: 2}
 states:

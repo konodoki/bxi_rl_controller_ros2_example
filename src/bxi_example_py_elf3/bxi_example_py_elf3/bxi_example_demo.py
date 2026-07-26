@@ -387,13 +387,15 @@ def main(args=None):
     node = BxiExample()
 
     executor = MultiThreadedExecutor(num_threads=3)
-    executor.add_node(node)
-
     try:
+        executor.add_node(node)
+        node.framework.attach_executor(executor)
         executor.spin()
     finally:
-        executor.shutdown()
-        node.destroy_node()
+        try:
+            node.destroy_node()
+        finally:
+            executor.shutdown()
 
     rclpy.shutdown()
 
