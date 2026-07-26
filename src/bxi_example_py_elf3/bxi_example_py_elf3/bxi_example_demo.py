@@ -218,6 +218,14 @@ class BxiExample(Node):
             print("robot reset 2!")
             self.step = 2
             self.framework.reset_inference_timeout_monitor()
+            if self.topic_prefix.find("simulation") != -1:
+                # 仿真下自动切成走路并释放
+                self.framework.request_state(
+                    "com.bxi.basic_actions/pd_brake", trigger="AutoPdbreak"
+                )
+                self.framework.request_state(
+                    "com.bxi.basic_actions/normal", trigger="AutoRelease"
+                )
             return
 
         if self.step == 2:
