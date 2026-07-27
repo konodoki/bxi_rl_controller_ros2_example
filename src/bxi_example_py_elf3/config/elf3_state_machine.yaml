@@ -27,7 +27,7 @@ transition_profiles:
       - type: hold
         duration: 0.02
       - type: entry_gain_ramp
-        duration: 0.02
+        duration: 1.0
         kp_from: zero
         kd_from: target
 
