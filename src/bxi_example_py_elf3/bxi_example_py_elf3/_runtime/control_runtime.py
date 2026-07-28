@@ -417,20 +417,42 @@ class RobotControlRuntime:
         ):
             return
 
-        period_ms = self.config.period_sec * 1000.0
-        interval_sec = self.config.deadline_warning_interval_sec
+        budget_ms = self.config.compute_budget_sec * 1000.0
+        wake_events = int(summary["wake_events"])
+        finish_events = int(summary["finish_events"])
+        finish_detail = (
+            f"，最大截止超限{summary['max_finish_late_ms']:.2f} ms"
+            if finish_events > 0
+            else ""
+        )
+        if wake_events > 0 and finish_events == 0:
+            conclusion = (
+                "初步判定：异常由调度唤醒延迟引起，"
+                "周期执行未超过截止时间；"
+            )
+        elif wake_events == 0 and finish_events > 0:
+            conclusion = (
+                "初步判定：周期执行超过截止时间，"
+                "调度唤醒延迟未超限；"
+            )
+        else:
+            conclusion = (
+                "初步判定：同时存在调度唤醒延迟和"
+                "周期完成截止超限；"
+            )
         logged = self._log(
             "warning",
-            f"控制时序异常汇总（最多每{interval_sec:.1f}秒报告一次）："
+            "控制周期时序异常："
             f"当前状态={summary['state']}；"
-            f"合并{summary['events']}次时间偏差，其中晚启动"
-            f"{summary['wake_events']}次、真正完成超时"
-            f"{summary['finish_events']}次。"
-            f"最严重一次晚启动{summary['max_wake_late_ms']:.2f}毫秒，"
-            f"最长整轮计算{summary['max_cycle_ms']:.2f}毫秒，"
-            f"最晚超过{period_ms:.2f}毫秒截止点"
-            f"{summary['max_finish_late_ms']:.2f}毫秒；"
-            f"启动以来累计记录{summary['latest_count']}次时间偏差。",
+            f"本次汇总异常周期{summary['events']}次，其中"
+            f"调度唤醒延迟超限{wake_events}次，"
+            f"周期完成截止超限{finish_events}次；"
+            f"最大唤醒延迟{summary['max_wake_late_ms']:.2f} ms"
+            f"（允许偏差{tolerance_ms:.2f} ms），"
+            f"最大周期执行耗时{summary['max_cycle_ms']:.2f} ms"
+            f"（预算{budget_ms:.2f} ms）{finish_detail}。"
+            f"{conclusion}"
+            f"启动以来累计异常{summary['latest_count']}次。",
         )
         if logged:
             self._pending_deadline_summary = None
@@ -526,19 +548,25 @@ class RobotControlRuntime:
         interval = timing["frame_interval_ms"]
         period_ms = self.config.period_sec * 1000.0
         budget_ms = self.config.compute_budget_sec * 1000.0
+        miss_rate = (
+            100.0 * misses_since_report / cycles_since_report
+            if cycles_since_report > 0
+            else 0.0
+        )
         message = (
-            "控制周期统计："
-            f"本统计窗口执行{cycles_since_report}轮，当前状态={timing['state']}。"
-            f"99%的启动延迟不超过{wake['p99']:.2f}毫秒；"
-            f"99%的整轮计算耗时不超过{cycle['p99']:.2f}毫秒，"
-            f"最慢一轮{cycle['max']:.2f}毫秒；"
-            f"99%的相邻控制轮次间隔不超过{interval['p99']:.2f}毫秒，"
-            f"最长间隔{interval['max']:.2f}毫秒。"
-            f"本窗口内：计算超过{budget_ms:.2f}毫秒目标预算"
-            f"{budget_overruns_since_report}次，"
-            f"偏离{period_ms:.2f}毫秒时间表{misses_since_report}次，"
-            f"跳过{skipped_since_report}个周期；"
-            f"启动以来累计超时{total_misses}次。"
+            "控制周期性能统计："
+            f"统计窗口内执行{cycles_since_report}个周期，"
+            f"当前状态={timing['state']}；"
+            f"时序异常{misses_since_report}次（占{miss_rate:.2f}%），"
+            f"计算预算超限{budget_overruns_since_report}次，"
+            f"跳过{skipped_since_report}个周期。"
+            f"P99唤醒延迟{wake['p99']:.2f} ms，"
+            f"P99周期执行耗时{cycle['p99']:.2f} ms，"
+            f"P99周期间隔{interval['p99']:.2f} ms；"
+            f"最大周期执行耗时{cycle['max']:.2f} ms，"
+            f"最大周期间隔{interval['max']:.2f} ms。"
+            f"目标周期{period_ms:.2f} ms，计算预算{budget_ms:.2f} ms；"
+            f"启动以来累计异常{total_misses}次。"
         )
         logged = self._log("info", message)
         if logged:
