@@ -49,6 +49,7 @@ class ControlRuntimeConfig:
     deadline_warning_interval_sec: float = 1.0
     maintenance_guard_sec: float = 0.005
     python_switch_interval_sec: float = 0.001
+    spin_wait_us: int = -1
     cpu_affinity: int = -1
     realtime_priority: int = 0
 
@@ -68,6 +69,7 @@ class ControlRuntimeConfig:
             "deadline_warning_interval_sec",
             "maintenance_guard_sec",
             "python_switch_interval_sec",
+            "spin_wait_us",
             "cpu_affinity",
             "realtime_priority",
         }
@@ -109,6 +111,7 @@ class ControlRuntimeConfig:
                 "python_switch_interval_sec",
                 defaults.python_switch_interval_sec,
             ),
+            spin_wait_us=_integer(raw, "spin_wait_us", defaults.spin_wait_us),
             cpu_affinity=_integer(raw, "cpu_affinity", defaults.cpu_affinity),
             realtime_priority=_integer(
                 raw, "realtime_priority", defaults.realtime_priority
@@ -148,6 +151,12 @@ class ControlRuntimeConfig:
         if self.python_switch_interval_sec <= 0.0:
             raise ValueError(
                 "control_runtime.python_switch_interval_sec must be greater than zero"
+            )
+        period_us = int(round(self.period_sec * 1_000_000.0))
+        if self.spin_wait_us < -1 or self.spin_wait_us >= period_us:
+            raise ValueError(
+                "control_runtime.spin_wait_us must be -1 or in "
+                f"[0, {period_us})"
             )
         if self.cpu_affinity < -1:
             raise ValueError("control_runtime.cpu_affinity must be -1 or a CPU index")
@@ -207,6 +216,7 @@ class RobotControlRuntime:
             period_sec=self.config.period_sec,
             compute_budget_sec=self.config.compute_budget_sec,
             deadline_tolerance_sec=self.config.deadline_tolerance_sec,
+            spin_wait_us=self.config.spin_wait_us,
             cpu_affinity=self.config.cpu_affinity,
             realtime_priority=self.config.realtime_priority,
             logger=logger,

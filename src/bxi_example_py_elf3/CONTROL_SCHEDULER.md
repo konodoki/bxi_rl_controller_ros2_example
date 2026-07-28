@@ -17,6 +17,7 @@ control_runtime:
   deadline_warning_interval_sec: 1.0
   maintenance_guard_sec: 0.005
   python_switch_interval_sec: 0.001
+  spin_wait_us: -1
   cpu_affinity: -1
   realtime_priority: 0
 ```
@@ -37,6 +38,10 @@ control_runtime:
   状态快照或 Mod 维护，避免反向阻塞控制线程。
 - `python_switch_interval_sec`：Python GIL 切换间隔。默认 1 ms，降低
   ROS Python 回调造成的控制线程唤醒长尾。
+- `spin_wait_us`：末段忙等时长，单位微秒。`-1` 表示关闭；非负值表示先正常
+  睡眠，在距离绝对释放点剩余该时长时切换为忙等。例如 `200` 表示最后
+  200 微秒忙等。该值必须小于一个控制周期；忙等会短暂占用一个 CPU 核心并
+  持有 Python GIL，建议只配置数百微秒并配合控制线程绑核使用。
 
 控制线程以每 20 ms 一个绝对释放点调用一次 Framework；完成时间不会被用来推导下一次
 释放点，因此推理耗时的短期波动不会形成累计漂移。启动阶段也沿用同一时间轴。
