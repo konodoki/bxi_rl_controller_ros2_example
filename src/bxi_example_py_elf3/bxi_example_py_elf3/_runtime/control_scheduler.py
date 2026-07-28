@@ -60,7 +60,7 @@ class ControlScheduler:
         *,
         period_sec: float,
         compute_budget_sec: float,
-        deadline_tolerance_sec: float = 0.0,
+        deadline_tolerance_sec: float = 0.001,
         cpu_affinity: int = -1,
         realtime_priority: int = 0,
         logger: LoggerLike | None = None,
@@ -99,6 +99,7 @@ class ControlScheduler:
         self._stats_lock = Lock()
         self._reset_window_locked()
         self._total_cycles = 0
+        self._total_budget_overruns = 0
         self._total_deadline_misses = 0
         self._total_skipped_periods = 0
         self._last_state = "startup"
@@ -127,12 +128,21 @@ class ControlScheduler:
         )
         self._thread = thread
         thread.start()
+        cpu_description = (
+            "未绑定" if self.cpu_affinity < 0 else str(self.cpu_affinity)
+        )
+        priority_description = (
+            "普通调度"
+            if self.realtime_priority == 0
+            else f"SCHED_FIFO/{self.realtime_priority}"
+        )
         self._log(
             "info",
-            "control scheduler started: "
-            f"period={self.period_ns / 1_000_000.0:.2f}ms, "
-            f"budget={self.compute_budget_ns / 1_000_000.0:.2f}ms, "
-            f"cpu={self.cpu_affinity}, rt_priority={self.realtime_priority}",
+            "控制调度器已启动："
+            f"每{self.period_ns / 1_000_000.0:.2f}毫秒执行一轮，"
+            f"目标计算预算{self.compute_budget_ns / 1_000_000.0:.2f}毫秒，"
+            f"允许时间误差{self.deadline_tolerance_ns / 1_000_000.0:.2f}毫秒，"
+            f"CPU={cpu_description}，调度策略={priority_description}",
         )
 
     def stop(self, timeout_sec: float = 5.0) -> None:
@@ -156,9 +166,11 @@ class ControlScheduler:
             publish = list(self._publish_ns)
             finish_late = list(self._finish_late_ns)
             window_cycles = self._window_cycles
+            window_budget_overruns = self._window_budget_overruns
             window_deadline_misses = self._window_deadline_misses
             window_skipped_periods = self._window_skipped_periods
             total_cycles = self._total_cycles
+            total_budget_overruns = self._total_budget_overruns
             total_deadline_misses = self._total_deadline_misses
             total_skipped_periods = self._total_skipped_periods
             state = self._last_state
@@ -170,9 +182,11 @@ class ControlScheduler:
             "period_ms": self.period_ns / 1_000_000.0,
             "compute_budget_ms": self.compute_budget_ns / 1_000_000.0,
             "cycles": window_cycles,
+            "budget_overruns": window_budget_overruns,
             "deadline_misses": window_deadline_misses,
             "skipped_periods": window_skipped_periods,
             "total_cycles": total_cycles,
+            "total_budget_overruns": total_budget_overruns,
             "total_deadline_misses": total_deadline_misses,
             "total_skipped_periods": total_skipped_periods,
             "state": state,
@@ -194,6 +208,7 @@ class ControlScheduler:
                 "period_ms": self.period_ns / 1_000_000.0,
                 "compute_budget_ms": self.compute_budget_ns / 1_000_000.0,
                 "total_cycles": self._total_cycles,
+                "total_budget_overruns": self._total_budget_overruns,
                 "total_deadline_misses": self._total_deadline_misses,
                 "total_skipped_periods": self._total_skipped_periods,
                 "state": self._last_state,
@@ -209,13 +224,13 @@ class ControlScheduler:
 
     def _run(self) -> None:
         self._configure_current_thread()
-        deadline_ns = time.monotonic_ns() + self.period_ns
-        was_active = False
-        last_active_finished_ns: int | None = None
+        # Releases, rather than completion times or the compute budget, define
+        # the fixed 50 Hz inference time line.
+        release_ns = time.monotonic_ns()
+        last_active_started_ns: int | None = None
         while not self._stop_event.is_set():
-            wake_target_ns = deadline_ns - self.compute_budget_ns
-            self._next_wake_ns = wake_target_ns
-            if not self._wait_until(wake_target_ns):
+            self._next_wake_ns = release_ns
+            if not self._wait_until(release_ns):
                 break
             wake_ns = time.monotonic_ns()
             cycle_started_ns = wake_ns
@@ -241,36 +256,42 @@ class ControlScheduler:
             finished_ns = time.monotonic_ns()
 
             if not metrics.active:
-                was_active = False
-                last_active_finished_ns = None
-                deadline_ns = finished_ns + self.period_ns
+                last_active_started_ns = None
+                release_ns = self._next_release_after(release_ns, finished_ns)
                 continue
-            if not was_active:
+            if last_active_started_ns is None:
                 with self._stats_lock:
                     self._reset_window_locked()
-                deadline_ns = finished_ns + self.period_ns
-                was_active = True
-                last_active_finished_ns = finished_ns
-                continue
 
-            wake_late_ns = max(0, wake_ns - wake_target_ns)
+            wake_late_ns = max(0, wake_ns - release_ns)
             cycle_ns = max(0, finished_ns - cycle_started_ns)
             frame_interval_ns = (
-                max(0, finished_ns - last_active_finished_ns)
-                if last_active_finished_ns is not None
+                max(0, cycle_started_ns - last_active_started_ns)
+                if last_active_started_ns is not None
                 else 0
             )
-            last_active_finished_ns = finished_ns
-            finish_late_ns = max(0, finished_ns - deadline_ns)
-            deadline_missed = finish_late_ns > self.deadline_tolerance_ns
+            last_active_started_ns = cycle_started_ns
 
-            next_deadline_ns = deadline_ns + self.period_ns
+            # Each release owns the complete following period.  Starting late
+            # and finishing after the next release are both deadline failures.
+            deadline_ns = release_ns + self.period_ns
+            finish_late_ns = max(0, finished_ns - deadline_ns)
+            deadline_missed = (
+                wake_late_ns > self.deadline_tolerance_ns
+                or finish_late_ns > self.deadline_tolerance_ns
+            )
+            budget_overrun = cycle_ns > self.compute_budget_ns
+
+            next_release_ns = deadline_ns
             skipped_periods = 0
-            if finished_ns >= next_deadline_ns:
+            # A small overrun runs the overdue release immediately and catches
+            # the original time line on a later short cycle.  Skip only release
+            # points for which another complete period has already elapsed.
+            if finished_ns >= next_release_ns + self.period_ns:
                 skipped_periods = (
-                    (finished_ns - next_deadline_ns) // self.period_ns
-                ) + 1
-                next_deadline_ns += skipped_periods * self.period_ns
+                    finished_ns - next_release_ns
+                ) // self.period_ns
+                next_release_ns += skipped_periods * self.period_ns
 
             miss_event = self._record_cycle(
                 metrics,
@@ -278,6 +299,7 @@ class ControlScheduler:
                 cycle_ns=cycle_ns,
                 frame_interval_ns=frame_interval_ns,
                 finish_late_ns=finish_late_ns,
+                budget_overrun=budget_overrun,
                 deadline_missed=deadline_missed,
                 skipped_periods=int(skipped_periods),
             )
@@ -286,8 +308,18 @@ class ControlScheduler:
                     self._deadline_miss_callback(miss_event)
                 except Exception as exc:
                     self._log("error", f"deadline miss callback failed: {exc}")
-            deadline_ns = next_deadline_ns
+            release_ns = next_release_ns
         self._next_wake_ns = None
+
+    def _next_release_after(self, release_ns: int, finished_ns: int) -> int:
+        """Keep inactive/startup work on the same period-aligned time line."""
+        next_release_ns = release_ns + self.period_ns
+        if finished_ns <= next_release_ns:
+            return next_release_ns
+        skipped = (
+            finished_ns - next_release_ns + self.period_ns - 1
+        ) // self.period_ns
+        return next_release_ns + skipped * self.period_ns
 
     def _wait_until(self, target_ns: int) -> bool:
         while not self._stop_event.is_set():
@@ -306,6 +338,7 @@ class ControlScheduler:
         cycle_ns: int,
         frame_interval_ns: int,
         finish_late_ns: int,
+        budget_overrun: bool,
         deadline_missed: bool,
         skipped_periods: int,
     ) -> dict[str, object] | None:
@@ -321,6 +354,9 @@ class ControlScheduler:
             self._framework_ns.append(max(0, int(metrics.framework_ns)))
             self._publish_ns.append(max(0, int(metrics.publish_ns)))
             self._finish_late_ns.append(finish_late_ns)
+            if budget_overrun:
+                self._window_budget_overruns += 1
+                self._total_budget_overruns += 1
             self._window_skipped_periods += skipped_periods
             self._total_skipped_periods += skipped_periods
             if deadline_missed:
@@ -368,6 +404,7 @@ class ControlScheduler:
         self._publish_ns: list[int] = []
         self._finish_late_ns: list[int] = []
         self._window_cycles = 0
+        self._window_budget_overruns = 0
         self._window_deadline_misses = 0
         self._window_skipped_periods = 0
 

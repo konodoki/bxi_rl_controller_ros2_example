@@ -304,17 +304,24 @@ class RobotControlFramework:
             if cmd_vel is None
             else np.asarray(cmd_vel, dtype=np.float32)
         )
-        history_len = int(getattr(model, "obs_history_len", 1))
-        for _ in range(history_len * 2):
-            infer_step = getattr(model, "infer_step", None)
-            if callable(infer_step):
-                infer_step(q, dq, quat_xyzw, omega, command)
-                continue
-            inference_step = getattr(model, "inference_step")
-            if with_cmd_vel:
-                inference_step(q, dq, quat_wxyz, omega, command)
-            else:
-                inference_step(q, dq, quat_wxyz, omega)
+        # History policies can fill their complete observation window from one
+        # current sample.  Do not run history_len * 2 ONNX calls in one 20 ms
+        # transition cycle (20 calls for the AMP policy).
+        reset_runtime_state = getattr(model, "reset_runtime_state", None)
+        if callable(reset_runtime_state):
+            reset_runtime_state(q, dq, quat_wxyz, omega, command)
+
+        # Run exactly once to perform lazy provider allocation and produce the
+        # entry frame for the current observation.
+        infer_step = getattr(model, "infer_step", None)
+        if callable(infer_step):
+            infer_step(q, dq, quat_xyzw, omega, command)
+            return
+        inference_step = getattr(model, "inference_step")
+        if with_cmd_vel:
+            inference_step(q, dq, quat_wxyz, omega, command)
+        else:
+            inference_step(q, dq, quat_wxyz, omega)
 
     def get_logger(self):
         return self._ros_node.get_logger()
