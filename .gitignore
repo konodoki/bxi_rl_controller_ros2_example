@@ -4,11 +4,16 @@
 build/
 install/
 log/
+benchmarks/results/
+benchmarks/cache/
+tools/benchmark/results/
+tools/benchmark/cache/
 .cache/
 !.gitignore
 # proxsuite/
 bxi_hw_release/
-src/bxi_example_py_elf3/test/
+src/bxi_example_py_elf3/test/*
+!src/bxi_example_py_elf3/test/test_inference_core.py
 __pycache__/
 MUJOCO_LOG.TXT
 .*/
