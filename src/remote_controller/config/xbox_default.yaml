@@ -304,7 +304,7 @@ controls:
 #将统一的controls映射到输出
 outputs:
   conflict_policy: first_wins
-  publish_on_change: false
+  publish_on_change: true
 
   #连续的模拟值
   analog:
