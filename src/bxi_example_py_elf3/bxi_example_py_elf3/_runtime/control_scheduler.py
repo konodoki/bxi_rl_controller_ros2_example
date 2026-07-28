@@ -61,6 +61,7 @@ class ControlScheduler:
         period_sec: float,
         compute_budget_sec: float,
         deadline_tolerance_sec: float = 0.001,
+        spin_wait_us: int = -1,
         cpu_affinity: int = -1,
         realtime_priority: int = 0,
         logger: LoggerLike | None = None,
@@ -76,6 +77,11 @@ class ControlScheduler:
             )
         if deadline_tolerance_sec < 0.0:
             raise ValueError("control deadline tolerance must be non-negative")
+        period_us = int(round(period_sec * 1_000_000.0))
+        if spin_wait_us < -1 or spin_wait_us >= period_us:
+            raise ValueError(
+                f"control spin wait must be -1 or in [0, {period_us}) microseconds"
+            )
         if cpu_affinity < -1:
             raise ValueError("control CPU affinity must be -1 or a CPU index")
         if realtime_priority < 0 or realtime_priority > 99:
@@ -87,6 +93,7 @@ class ControlScheduler:
         self.deadline_tolerance_ns = int(
             round(deadline_tolerance_sec * 1_000_000_000.0)
         )
+        self.spin_wait_ns = -1 if spin_wait_us < 0 else int(spin_wait_us) * 1_000
         self.cpu_affinity = int(cpu_affinity)
         self.realtime_priority = int(realtime_priority)
         self._logger = logger
@@ -136,12 +143,18 @@ class ControlScheduler:
             if self.realtime_priority == 0
             else f"SCHED_FIFO/{self.realtime_priority}"
         )
+        spin_description = (
+            "关闭"
+            if self.spin_wait_ns < 0
+            else f"最后{self.spin_wait_ns / 1_000.0:.0f}微秒"
+        )
         self._log(
             "info",
             "控制调度器已启动："
             f"每{self.period_ns / 1_000_000.0:.2f}毫秒执行一轮，"
             f"目标计算预算{self.compute_budget_ns / 1_000_000.0:.2f}毫秒，"
             f"允许时间误差{self.deadline_tolerance_ns / 1_000_000.0:.2f}毫秒，"
+            f"末段忙等={spin_description}，"
             f"CPU={cpu_description}，调度策略={priority_description}",
         )
 
@@ -326,7 +339,19 @@ class ControlScheduler:
             remaining_ns = target_ns - time.monotonic_ns()
             if remaining_ns <= 0:
                 return True
-            if self._stop_event.wait(remaining_ns / 1_000_000_000.0):
+
+            # Sleep for most of the wait, then optionally busy-spin over only
+            # the configured final slice.  The absolute target is unchanged,
+            # so the fixed-frequency release time line cannot drift.
+            if self.spin_wait_ns >= 0 and remaining_ns <= self.spin_wait_ns:
+                while time.monotonic_ns() < target_ns:
+                    pass
+                return not self._stop_event.is_set()
+
+            sleep_ns = remaining_ns
+            if self.spin_wait_ns >= 0:
+                sleep_ns -= self.spin_wait_ns
+            if self._stop_event.wait(sleep_ns / 1_000_000_000.0):
                 return False
         return False
 
