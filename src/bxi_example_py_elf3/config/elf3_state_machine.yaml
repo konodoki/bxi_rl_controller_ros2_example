@@ -13,6 +13,7 @@ control_runtime:
   maintenance_hz: 5.0
   maintenance_guard_sec: 0.005
   statistics_interval_sec: 60.0
+  deadline_warning_interval_sec: 1.0
 
   # 部署相关优化默认关闭；按目标机器能力显式开启。
   python_switch_interval_sec: 0.001

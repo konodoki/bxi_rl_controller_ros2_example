@@ -14,6 +14,7 @@ control_runtime:
   deadline_tolerance_sec: 0.001
   maintenance_hz: 5.0
   statistics_interval_sec: 60.0
+  deadline_warning_interval_sec: 1.0
   maintenance_guard_sec: 0.005
   python_switch_interval_sec: 0.001
   cpu_affinity: -1
@@ -30,6 +31,8 @@ control_runtime:
 - `maintenance_hz`：Runtime 自有低频线程的 Mod 进程监管频率，不进入 50 Hz
   控制路径。
 - `statistics_interval_sec`：周期性 INFO 调度统计的输出间隔。
+- `deadline_warning_interval_sec`：逐轮时间异常的合并告警间隔。默认 1 秒，
+  无论这段时间内出现多少异常，最多输出一条汇总 WARNING。
 - `maintenance_guard_sec`：距离下一次控制唤醒不足该时间时，跳过本轮
   状态快照或 Mod 维护，避免反向阻塞控制线程。
 - `python_switch_interval_sec`：Python GIL 切换间隔。默认 1 ms，降低
@@ -46,11 +49,11 @@ control_runtime:
 完整控制周期耗时，以及自上次成功输出以来的控制周期、预算超限、deadline miss 和
 跳过周期增量。
 
-每次 deadline miss 都由控制线程轻量放入队列，再由现有 maintenance 线程逐条输出
-WARNING；不等待统计周期、不合并、不限频，也不在 50 Hz 控制线程内执行日志 I/O。
-默认 maintenance 频率为 5 Hz，因此 WARNING 最多延迟约 200 ms。一次输出失败会保留
-该事件，并在后续 maintenance 周期重试。deadline miss 不自动切换状态。状态信息话题的
-`control_timing` 字段提供累计计数和最后一次 miss。
+每次 deadline miss 都由控制线程轻量放入队列，再由现有 maintenance 线程合并统计，
+不会在 50 Hz 控制线程内执行日志 I/O。默认每秒最多打印一条汇总 WARNING，分别给出
+晚启动次数、真正完成超时次数和最严重数值。一次输出失败会保留汇总，并在后续维护周期
+重试。deadline miss 不自动切换状态。状态信息话题的 `control_timing` 字段提供累计计数
+和最后一次 miss。
 
 时间统计日志使用中文解释式输出。逐条超时会说明计划周期、晚启动时间、整轮计算耗时、
 完成超时以及推测的主要原因；周期摘要使用“99%的轮次”和“最慢一轮”等直观表述，
