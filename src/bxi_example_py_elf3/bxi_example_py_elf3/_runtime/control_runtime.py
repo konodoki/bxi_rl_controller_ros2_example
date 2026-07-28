@@ -46,6 +46,7 @@ class ControlRuntimeConfig:
     deadline_tolerance_sec: float = 0.001
     maintenance_hz: float = 5.0
     statistics_interval_sec: float = 30.0
+    deadline_warning_interval_sec: float = 1.0
     maintenance_guard_sec: float = 0.005
     python_switch_interval_sec: float = 0.001
     cpu_affinity: int = -1
@@ -64,6 +65,7 @@ class ControlRuntimeConfig:
             "deadline_tolerance_sec",
             "maintenance_hz",
             "statistics_interval_sec",
+            "deadline_warning_interval_sec",
             "maintenance_guard_sec",
             "python_switch_interval_sec",
             "cpu_affinity",
@@ -91,6 +93,11 @@ class ControlRuntimeConfig:
                 raw,
                 "statistics_interval_sec",
                 defaults.statistics_interval_sec,
+            ),
+            deadline_warning_interval_sec=_number(
+                raw,
+                "deadline_warning_interval_sec",
+                defaults.deadline_warning_interval_sec,
             ),
             maintenance_guard_sec=_number(
                 raw,
@@ -127,6 +134,11 @@ class ControlRuntimeConfig:
         if self.statistics_interval_sec <= 0.0:
             raise ValueError(
                 "control_runtime.statistics_interval_sec must be greater than zero"
+            )
+        if self.deadline_warning_interval_sec <= 0.0:
+            raise ValueError(
+                "control_runtime.deadline_warning_interval_sec must be greater "
+                "than zero"
             )
         if not 0.0 <= self.maintenance_guard_sec < self.period_sec:
             raise ValueError(
@@ -172,6 +184,8 @@ class RobotControlRuntime:
         self._stop_event = Event()
         self._maintenance_thread: Thread | None = None
         self._deadline_miss_queue: SimpleQueue[dict[str, object]] = SimpleQueue()
+        self._pending_deadline_summary: dict[str, object] | None = None
+        self._last_deadline_warning_at = 0.0
         self._started = False
         self._closed = False
         self._original_python_switch_interval: float | None = None
@@ -385,42 +399,84 @@ class RobotControlRuntime:
         self._deadline_miss_queue.put(dict(miss))
 
     def _drain_deadline_misses(self) -> None:
+        tolerance_ms = self.config.deadline_tolerance_sec * 1000.0
         while True:
             try:
                 miss = self._deadline_miss_queue.get_nowait()
             except Empty:
-                return
-            wake_late_ms = float(miss["wake_late_ms"])
-            cycle_ms = float(miss["cycle_ms"])
-            finish_late_ms = float(miss["finish_late_ms"])
-            tolerance_ms = self.config.deadline_tolerance_sec * 1000.0
-            budget_ms = self.config.compute_budget_sec * 1000.0
-            period_ms = self.config.period_sec * 1000.0
-            if wake_late_ms > tolerance_ms and cycle_ms > budget_ms:
-                cause = "控制线程启动较晚，同时本轮计算也超过了目标预算"
-            elif wake_late_ms > tolerance_ms:
-                cause = "控制线程启动太晚，通常是CPU调度或Python GIL阻塞"
-            elif cycle_ms > budget_ms:
-                cause = "本轮控制计算超过了目标预算"
-            else:
-                cause = "本轮完成时间越过了截止点"
-            completion = (
-                f"最终比截止时间晚{finish_late_ms:.2f}毫秒完成"
-                if finish_late_ms > 0.0
-                else "最终仍在完成截止时间内"
-            )
-            logged = self._log(
-                "warning",
-                f"控制周期偏离{period_ms:.2f}毫秒时间表："
-                f"当前状态={miss['state']}；"
-                f"本轮比计划晚{wake_late_ms:.2f}毫秒开始，"
-                f"整轮控制计算耗时{cycle_ms:.2f}毫秒，{completion}。"
-                f"主要原因：{cause}。"
-                f"这是启动后的第{miss['count']}次超时。",
-            )
-            if not logged:
-                self._deadline_miss_queue.put(miss)
-                return
+                break
+            self._merge_deadline_miss(miss, tolerance_ms=tolerance_ms)
+
+        summary = self._pending_deadline_summary
+        if summary is None:
+            return
+        now = time.monotonic()
+        if (
+            now - self._last_deadline_warning_at
+            < self.config.deadline_warning_interval_sec
+        ):
+            return
+
+        period_ms = self.config.period_sec * 1000.0
+        interval_sec = self.config.deadline_warning_interval_sec
+        logged = self._log(
+            "warning",
+            f"控制时序异常汇总（最多每{interval_sec:.1f}秒报告一次）："
+            f"当前状态={summary['state']}；"
+            f"合并{summary['events']}次时间偏差，其中晚启动"
+            f"{summary['wake_events']}次、真正完成超时"
+            f"{summary['finish_events']}次。"
+            f"最严重一次晚启动{summary['max_wake_late_ms']:.2f}毫秒，"
+            f"最长整轮计算{summary['max_cycle_ms']:.2f}毫秒，"
+            f"最晚超过{period_ms:.2f}毫秒截止点"
+            f"{summary['max_finish_late_ms']:.2f}毫秒；"
+            f"启动以来累计记录{summary['latest_count']}次时间偏差。",
+        )
+        if logged:
+            self._pending_deadline_summary = None
+            self._last_deadline_warning_at = now
+
+    def _merge_deadline_miss(
+        self,
+        miss: dict[str, object],
+        *,
+        tolerance_ms: float,
+    ) -> None:
+        """Merge hot-path timing events without doing log I/O per cycle."""
+        wake_late_ms = float(miss["wake_late_ms"])
+        cycle_ms = float(miss["cycle_ms"])
+        finish_late_ms = float(miss["finish_late_ms"])
+        summary = self._pending_deadline_summary
+        if summary is None:
+            summary = {
+                "state": str(miss["state"]),
+                "events": 0,
+                "wake_events": 0,
+                "finish_events": 0,
+                "max_wake_late_ms": 0.0,
+                "max_cycle_ms": 0.0,
+                "max_finish_late_ms": 0.0,
+                "latest_count": 0,
+            }
+            self._pending_deadline_summary = summary
+        summary["state"] = str(miss["state"])
+        summary["events"] = int(summary["events"]) + 1
+        if wake_late_ms > tolerance_ms:
+            summary["wake_events"] = int(summary["wake_events"]) + 1
+        if finish_late_ms > tolerance_ms:
+            summary["finish_events"] = int(summary["finish_events"]) + 1
+        summary["max_wake_late_ms"] = max(
+            float(summary["max_wake_late_ms"]), wake_late_ms
+        )
+        summary["max_cycle_ms"] = max(
+            float(summary["max_cycle_ms"]), cycle_ms
+        )
+        summary["max_finish_late_ms"] = max(
+            float(summary["max_finish_late_ms"]), finish_late_ms
+        )
+        summary["latest_count"] = max(
+            int(summary["latest_count"]), int(miss["count"])
+        )
 
     def _join_maintenance_thread(self) -> Exception | None:
         thread = self._maintenance_thread
