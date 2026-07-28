@@ -43,7 +43,7 @@ class ControlRuntimeConfig:
 
     period_sec: float = 0.02
     compute_budget_sec: float = 0.002
-    deadline_tolerance_sec: float = 0.0
+    deadline_tolerance_sec: float = 0.001
     maintenance_hz: float = 5.0
     statistics_interval_sec: float = 30.0
     maintenance_guard_sec: float = 0.005
@@ -177,6 +177,7 @@ class RobotControlRuntime:
         self._original_python_switch_interval: float | None = None
         self._last_control_events: tuple[str, ...] = ()
         self._last_reported_total_cycles = 0
+        self._last_reported_total_budget_overruns = 0
         self._last_reported_total_deadline_misses = 0
         self._last_reported_total_skipped_periods = 0
 
@@ -389,14 +390,33 @@ class RobotControlRuntime:
                 miss = self._deadline_miss_queue.get_nowait()
             except Empty:
                 return
+            wake_late_ms = float(miss["wake_late_ms"])
+            cycle_ms = float(miss["cycle_ms"])
+            finish_late_ms = float(miss["finish_late_ms"])
+            tolerance_ms = self.config.deadline_tolerance_sec * 1000.0
+            budget_ms = self.config.compute_budget_sec * 1000.0
+            period_ms = self.config.period_sec * 1000.0
+            if wake_late_ms > tolerance_ms and cycle_ms > budget_ms:
+                cause = "控制线程启动较晚，同时本轮计算也超过了目标预算"
+            elif wake_late_ms > tolerance_ms:
+                cause = "控制线程启动太晚，通常是CPU调度或Python GIL阻塞"
+            elif cycle_ms > budget_ms:
+                cause = "本轮控制计算超过了目标预算"
+            else:
+                cause = "本轮完成时间越过了截止点"
+            completion = (
+                f"最终比截止时间晚{finish_late_ms:.2f}毫秒完成"
+                if finish_late_ms > 0.0
+                else "最终仍在完成截止时间内"
+            )
             logged = self._log(
                 "warning",
-                "control deadline miss: "
-                f"state={miss['state']}, "
-                f"finish_late={miss['finish_late_ms']:.2f}ms, "
-                f"wake_late={miss['wake_late_ms']:.2f}ms, "
-                f"cycle={miss['cycle_ms']:.2f}ms, "
-                f"count={miss['count']}",
+                f"控制周期偏离{period_ms:.2f}毫秒时间表："
+                f"当前状态={miss['state']}；"
+                f"本轮比计划晚{wake_late_ms:.2f}毫秒开始，"
+                f"整轮控制计算耗时{cycle_ms:.2f}毫秒，{completion}。"
+                f"主要原因：{cause}。"
+                f"这是启动后的第{miss['count']}次超时。",
             )
             if not logged:
                 self._deadline_miss_queue.put(miss)
@@ -426,11 +446,16 @@ class RobotControlRuntime:
     def _report_control_timing(self) -> None:
         timing = self.scheduler.timing_snapshot(reset_window=True)
         total_cycles = int(timing["total_cycles"])
+        total_budget_overruns = int(timing["total_budget_overruns"])
         total_misses = int(timing["total_deadline_misses"])
         total_skipped = int(timing["total_skipped_periods"])
         cycles_since_report = max(
             0,
             total_cycles - self._last_reported_total_cycles,
+        )
+        budget_overruns_since_report = max(
+            0,
+            total_budget_overruns - self._last_reported_total_budget_overruns,
         )
         misses_since_report = max(
             0,
@@ -443,21 +468,26 @@ class RobotControlRuntime:
         wake = timing["wake_late_ms"]
         cycle = timing["cycle_ms"]
         interval = timing["frame_interval_ms"]
+        period_ms = self.config.period_sec * 1000.0
+        budget_ms = self.config.compute_budget_sec * 1000.0
         message = (
-            "control timing: "
-            f"cycles={cycles_since_report}, state={timing['state']}, "
-            f"wake_p99={wake['p99']:.2f}ms, "
-            f"cycle_p99={cycle['p99']:.2f}ms, "
-            f"cycle_max={cycle['max']:.2f}ms, "
-            f"interval_p99={interval['p99']:.2f}ms, "
-            f"interval_max={interval['max']:.2f}ms, "
-            f"deadline_misses={misses_since_report}, "
-            f"skipped_periods={skipped_since_report}, "
-            f"total_misses={total_misses}"
+            "控制周期统计："
+            f"本统计窗口执行{cycles_since_report}轮，当前状态={timing['state']}。"
+            f"99%的启动延迟不超过{wake['p99']:.2f}毫秒；"
+            f"99%的整轮计算耗时不超过{cycle['p99']:.2f}毫秒，"
+            f"最慢一轮{cycle['max']:.2f}毫秒；"
+            f"99%的相邻控制轮次间隔不超过{interval['p99']:.2f}毫秒，"
+            f"最长间隔{interval['max']:.2f}毫秒。"
+            f"本窗口内：计算超过{budget_ms:.2f}毫秒目标预算"
+            f"{budget_overruns_since_report}次，"
+            f"偏离{period_ms:.2f}毫秒时间表{misses_since_report}次，"
+            f"跳过{skipped_since_report}个周期；"
+            f"启动以来累计超时{total_misses}次。"
         )
         logged = self._log("info", message)
         if logged:
             self._last_reported_total_cycles = total_cycles
+            self._last_reported_total_budget_overruns = total_budget_overruns
             self._last_reported_total_deadline_misses = total_misses
             self._last_reported_total_skipped_periods = total_skipped
 

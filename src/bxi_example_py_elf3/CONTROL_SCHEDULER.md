@@ -11,7 +11,7 @@
 control_runtime:
   period_sec: 0.02
   compute_budget_sec: 0.002
-  deadline_tolerance_sec: 0.0
+  deadline_tolerance_sec: 0.001
   maintenance_hz: 5.0
   statistics_interval_sec: 60.0
   maintenance_guard_sec: 0.005
@@ -21,8 +21,9 @@ control_runtime:
 ```
 
 - `period_sec`：统一控制周期，所有状态和过渡共用。
-- `compute_budget_sec`：在截止点前多久唤醒控制线程。默认提前 2 ms。
-- `deadline_tolerance_sec`：完成时间超过截止点后的额外容差。
+- `compute_budget_sec`：单轮控制计算的目标耗时预算。它只用于统计预算超限，
+  不会改变 20 ms 推理释放时间轴；硬截止时间始终是本轮释放后的下一个周期。
+- `deadline_tolerance_sec`：释放唤醒或完成时间超过对应截止点后的额外容差。
 - `cpu_affinity`：`-1` 表示不绑核，非负值表示控制线程绑定的 CPU。
 - `realtime_priority`：`0` 表示普通调度，`1..99` 尝试启用
   `SCHED_FIFO`；权限不足时记录警告并继续使用普通调度。
@@ -34,14 +35,26 @@ control_runtime:
 - `python_switch_interval_sec`：Python GIL 切换间隔。默认 1 ms，降低
   ROS Python 回调造成的控制线程唤醒长尾。
 
+控制线程以每 20 ms 一个绝对释放点调用一次 Framework；完成时间不会被用来推导下一次
+释放点，因此推理耗时的短期波动不会形成累计漂移。启动阶段也沿用同一时间轴。
+单轮轻微越过下一释放点时，下一轮会立即补上并在后续短周期恢复原时间轴；只有已经
+跨过完整的额外释放点时才计为跳过，避免无谓地少执行一次推理。
+带历史观测的策略在状态准备阶段直接用当前观测填充历史缓冲，仅执行一次预热推理；
+不会再在一个控制周期内集中执行 `history_len * 2` 次推理。
+
 `statistics_interval_sec` 只控制 INFO 统计摘要的输出周期。摘要包含唤醒延迟、
-完整控制周期耗时，以及自上次成功输出以来的控制周期、deadline miss 和跳过周期增量。
+完整控制周期耗时，以及自上次成功输出以来的控制周期、预算超限、deadline miss 和
+跳过周期增量。
 
 每次 deadline miss 都由控制线程轻量放入队列，再由现有 maintenance 线程逐条输出
 WARNING；不等待统计周期、不合并、不限频，也不在 50 Hz 控制线程内执行日志 I/O。
 默认 maintenance 频率为 5 Hz，因此 WARNING 最多延迟约 200 ms。一次输出失败会保留
 该事件，并在后续 maintenance 周期重试。deadline miss 不自动切换状态。状态信息话题的
 `control_timing` 字段提供累计计数和最后一次 miss。
+
+时间统计日志使用中文解释式输出。逐条超时会说明计划周期、晚启动时间、整轮计算耗时、
+完成超时以及推测的主要原因；周期摘要使用“99%的轮次”和“最慢一轮”等直观表述，
+无需对照字段缩写。
 
 Runtime 和 Scheduler 的 INFO、WARNING、ERROR 使用彼此独立的 Python 调用位置，
 兼容 `rclpy` 对同一日志调用位置固定 severity 的要求；进入高负载状态后从 INFO
