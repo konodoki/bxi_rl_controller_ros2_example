@@ -211,6 +211,24 @@ def _json_value(value: object) -> object:
     )
 
 
+def _rknn_input_size_list(
+    input_shapes: tuple[tuple[str, tuple[object, ...]], ...],
+) -> tuple[tuple[int, ...], ...] | None:
+    if not input_shapes:
+        return None
+    resolved: list[tuple[int, ...]] = []
+    for _name, shape in input_shapes:
+        if not shape:
+            return None
+        concrete: list[int] = []
+        for dimension in shape:
+            if not isinstance(dimension, int) or dimension <= 0:
+                return None
+            concrete.append(dimension)
+        resolved.append(tuple(concrete))
+    return tuple(resolved)
+
+
 def _read_manifest(path: Path) -> dict[str, object] | None:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -298,6 +316,7 @@ def _convert(
     source: Path,
     destination: Path,
     manifest_path: Path,
+    input_shapes: tuple[tuple[str, tuple[object, ...]], ...],
     settings: _ConversionSettings,
     previous_fingerprint: Mapping[str, object] | None,
     installed_version: str | None,
@@ -336,6 +355,14 @@ def _convert(
             ),
         )
         load_arguments: dict[str, object] = {"model": str(source)}
+        input_names = [name for name, _shape in input_shapes]
+        input_size_list = _rknn_input_size_list(input_shapes)
+        if input_names:
+            load_arguments["inputs"] = input_names
+        if input_size_list is not None:
+            load_arguments["input_size_list"] = [
+                list(shape) for shape in input_size_list
+            ]
         if settings.output_names:
             load_arguments["outputs"] = list(settings.output_names)
         _check_result("load_onnx", converter.load_onnx(**load_arguments))
@@ -468,6 +495,7 @@ def prepare_rknn_artifact(artifact: RknnArtifact) -> RknnPreparation:
                 source,
                 destination,
                 manifest_path,
+                artifact.input_shapes,
                 settings,
                 previous,
                 installed_version,

@@ -65,7 +65,6 @@ class BenchmarkCase:
     factory: object
     artifact: object
     requested_device: str | None = None
-    input_names: tuple[str, ...] | None = None
     output_names: tuple[str, ...] | None = None
 
 
@@ -407,6 +406,7 @@ def _cases_for_model(
     include_auto: bool,
     rknn_target: str | None,
     rknn_cache: Path,
+    dynamic_dimension: int,
 ) -> list[BenchmarkCase]:
     cases = []
     cpu_provider = "CPUExecutionProvider"
@@ -501,11 +501,8 @@ def _cases_for_model(
                     target=rknn_target,
                     source_onnx=model.path,
                     conversion_output_names=rknn_outputs,
-                    input_shapes=tuple(
-                        (item.name, tuple(_json_shape(item.shape)))
-                        for item in model.inputs
-                        if item.name in rknn_inputs
-                    ),
+                    runtime_input_names=rknn_inputs,
+                    input_shapes=_artifact_input_shapes(model, dynamic_dimension),
                     output_shapes=tuple(
                         (item.name, tuple(_json_shape(item.shape)))
                         for item in model.outputs
@@ -513,7 +510,6 @@ def _cases_for_model(
                     ),
                 ),
                 requested_device=rknn_target,
-                input_names=rknn_inputs,
                 output_names=rknn_outputs,
             )
         )
@@ -525,6 +521,16 @@ def _json_shape(shape: tuple[object, ...]) -> list[object]:
         int(item) if isinstance(item, (int, np.integer)) else str(item)
         for item in shape
     ]
+
+
+def _artifact_input_shapes(
+    model: ModelInfo,
+    dynamic_dimension: int,
+) -> tuple[tuple[str, tuple[int, ...]], ...]:
+    return tuple(
+        (tensor.name, _concrete_shape(tensor, {}, dynamic_dimension))
+        for tensor in model.inputs
+    )
 
 
 def _backend_details(case: BenchmarkCase, backend) -> dict[str, Any]:
@@ -649,7 +655,7 @@ def _run_case(
 
     spec = ModelSpec(
         artifacts=(case.artifact,),
-        input_names=case.input_names or tuple(item.name for item in model.inputs),
+        input_names=tuple(item.name for item in model.inputs),
         output_names=case.output_names or tuple(item.name for item in model.outputs),
     )
     backend = None
@@ -712,11 +718,8 @@ def _worker_case(args: argparse.Namespace, model: ModelInfo) -> BenchmarkCase:
                 target=args.rknn_target,
                 source_onnx=model.path,
                 conversion_output_names=output_names,
-                input_shapes=tuple(
-                    (item.name, tuple(_json_shape(item.shape)))
-                    for item in model.inputs
-                    if item.name in input_names
-                ),
+                runtime_input_names=input_names,
+                input_shapes=_artifact_input_shapes(model, args.dynamic_dim),
                 output_shapes=tuple(
                     (item.name, tuple(_json_shape(item.shape)))
                     for item in model.outputs
@@ -724,7 +727,6 @@ def _worker_case(args: argparse.Namespace, model: ModelInfo) -> BenchmarkCase:
                 ),
             ),
             requested_device=args.rknn_target,
-            input_names=input_names,
             output_names=output_names,
         )
     raise ValueError(f"unknown benchmark worker backend: {args.worker_backend}")
@@ -1189,6 +1191,7 @@ def main() -> int:
             not args.no_openvino_auto,
             args.rknn_target,
             args.rknn_cache.expanduser().resolve(),
+            args.dynamic_dim,
         ):
             result, outputs = _run_case_isolated(
                 case,
