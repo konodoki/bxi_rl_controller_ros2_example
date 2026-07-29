@@ -64,7 +64,7 @@ class RunningBlendTransition(SingleClassTransition):
         )
         sample_from = reader.boolean("sample_from", default=True)
         sample_to = reader.boolean("sample_to", default=True)
-        advance_from = reader.boolean("advance_from", default=False)
+        advance_from = reader.boolean("advance_from", default=True)
         advance_to = reader.boolean("advance_to", default=False)
         reader.finish()
         return cls(
