@@ -20,46 +20,63 @@ from geometry_msgs.msg import Pose
 from sensor_msgs.msg import JointState
 from ament_index_python.packages import get_package_share_directory
 
-from bxi_example_py_elf3._runtime.control_runtime import RobotControlRuntime
-from bxi_example_py_elf3._runtime.controller import RobotObservation
-from bxi_example_py_elf3._runtime.state_machine import load_state_machine_config
-from bxi_example_py_elf3.mod_api import MotorFrame
+from bxi_example_py_elf3.framework.runtime.state_machine import load_state_machine_config
+from bxi_example_py_elf3.framework.joints import (
+    JointCommandDefaults,
+    JointLayout,
+    JointStateBuffer,
+)
+from bxi_example_py_elf3.framework.mod_api import MotorFrame
+from bxi_example_py_elf3.framework.platform import (
+    NamedJointStateSource,
+    RobotControlRuntime,
+    RobotObservation,
+)
 
 robot_name = "elf3"
 
-dof_num = 29
-
-joint_name = (
-    "waist_y_joint",
-    "waist_x_joint",
-    "waist_z_joint",
-    "l_hip_y_joint",  # 左腿_髋关节_z轴
-    "l_hip_x_joint",  # 左腿_髋关节_x轴
-    "l_hip_z_joint",  # 左腿_髋关节_y轴
-    "l_knee_y_joint",  # 左腿_膝关节_y轴
-    "l_ankle_y_joint",  # 左腿_踝关节_y轴
-    "l_ankle_x_joint",  # 左腿_踝关节_x轴
-    "r_hip_y_joint",  # 右腿_髋关节_z轴
-    "r_hip_x_joint",  # 右腿_髋关节_x轴
-    "r_hip_z_joint",  # 右腿_髋关节_y轴
-    "r_knee_y_joint",  # 右腿_膝关节_y轴
-    "r_ankle_y_joint",  # 右腿_踝关节_y轴
-    "r_ankle_x_joint",  # 右腿_踝关节_x轴
-    "l_shoulder_y_joint",  # 左臂_肩关节_y轴
-    "l_shoulder_x_joint",  # 左臂_肩关节_x轴
-    "l_shoulder_z_joint",  # 左臂_肩关节_z轴
-    "l_elbow_y_joint",  # 左臂_肘关节_y轴
-    "l_wrist_x_joint",
-    "l_wrist_y_joint",
-    "l_wrist_z_joint",
-    "r_shoulder_y_joint",  # 右臂_肩关节_y轴
-    "r_shoulder_x_joint",  # 右臂_肩关节_x轴
-    "r_shoulder_z_joint",  # 右臂_肩关节_z轴
-    "r_elbow_y_joint",  # 右臂_肘关节_y轴
-    "r_wrist_x_joint",
-    "r_wrist_y_joint",
-    "r_wrist_z_joint",
+ELF3_RESET_JOINTS = JointLayout(
+    (
+        "waist_y_joint",
+        "waist_x_joint",
+        "waist_z_joint",
+        "l_hip_y_joint",
+        "l_hip_x_joint",
+        "l_hip_z_joint",
+        "l_knee_y_joint",
+        "l_ankle_y_joint",
+        "l_ankle_x_joint",
+        "r_hip_y_joint",
+        "r_hip_x_joint",
+        "r_hip_z_joint",
+        "r_knee_y_joint",
+        "r_ankle_y_joint",
+        "r_ankle_x_joint",
+        "l_shoulder_y_joint",
+        "l_shoulder_x_joint",
+        "l_shoulder_z_joint",
+        "l_elbow_y_joint",
+        "l_wrist_x_joint",
+        "l_wrist_y_joint",
+        "l_wrist_z_joint",
+        "r_shoulder_y_joint",
+        "r_shoulder_x_joint",
+        "r_shoulder_z_joint",
+        "r_elbow_y_joint",
+        "r_wrist_x_joint",
+        "r_wrist_y_joint",
+        "r_wrist_z_joint",
+    ),
+    label="ELF3 simulation reset",
 )
+
+dof_num = ELF3_RESET_JOINTS.dof_num
+joint_name = ELF3_RESET_JOINTS.names
+
+# Add an explicit JointDefault entry here for every hardware joint that older
+# policies do not command. Name lookup is compiled once when that policy first
+# produces a frame; the control-cycle path performs no dictionary lookup.
+ELF3_COMMAND_DEFAULTS = JointCommandDefaults()
 
 
 class BxiExample(Node):
@@ -75,23 +92,30 @@ class BxiExample(Node):
         self.init_pub_sub()
 
         # 机器人状态变量(robot states)
-        self.qpos = np.zeros(dof_num, dtype=np.double)
-        self.qvel = np.zeros(dof_num, dtype=np.double)
         self.omega = np.zeros(3, dtype=np.double)
         self.quat_xyzw = np.zeros(4, dtype=np.double)
         self.quat_wxyz = np.zeros(4, dtype=np.double)
         self.raw_cmd_vel = np.zeros(3, dtype=np.float32)
         self.pending_remote_events = deque()
+        self._joint_source = NamedJointStateSource(dtype=np.float64)
+        self._joint_received = False
+        self._bad_joint_state_warned = False
+        self._joint_snapshot: JointStateBuffer | None = None
+        self._quat_xyzw_snapshot = np.zeros(4, dtype=np.float64)
+        self._quat_wxyz_snapshot = np.zeros(4, dtype=np.float64)
+        self._omega_snapshot = np.zeros(3, dtype=np.float64)
+        self._cmd_snapshot = np.zeros(3, dtype=np.float32)
+        self._observation: RobotObservation | None = None
 
         # 控制循环初始化
         self.step = 0
         self._second_reset_at = 0.0
-        self._zero_actuator_values = [0.0] * dof_num
+        self._zero_actuator_values: list[float] = []
 
         self.runtime = RobotControlRuntime(
             self.state_machine_config,
             built_in_mod_root=self.package_share / "mods",
-            dof_num=dof_num,
+            command_defaults=ELF3_COMMAND_DEFAULTS,
             ros_node=self,
             platform=self,
             logger=self.get_logger(),
@@ -243,29 +267,47 @@ class BxiExample(Node):
                     "com.bxi.basic_actions/normal", trigger="AutoRelease"
                 )
             return False
-        return True
+        with self.lock_in:
+            return self._joint_received
 
     def snapshot_control_inputs(self):
         """Copy the latest ROS inputs into one coherent framework observation."""
         with self.lock_in:
-            observation = RobotObservation(
-                q=self.qpos.copy(),
-                dq=self.qvel.copy(),
-                quat_xyzw=self.quat_xyzw.copy(),
-                quat_wxyz=self.quat_wxyz.copy(),
-                omega=self.omega.copy(),
-                raw_cmd_vel=self.raw_cmd_vel.copy(),
+            latest_joints = self._joint_source.view
+            if self._joint_snapshot is None:
+                self._joint_snapshot = JointStateBuffer(
+                    latest_joints.layout,
+                    dtype=np.float64,
+                )
+                self._observation = RobotObservation(
+                    joints=self._joint_snapshot.view,
+                    quat_xyzw=self._quat_xyzw_snapshot,
+                    quat_wxyz=self._quat_wxyz_snapshot,
+                    omega=self._omega_snapshot,
+                    raw_cmd_vel=self._cmd_snapshot,
+                )
+            self._joint_snapshot.update(
+                latest_joints.position,
+                latest_joints.velocity,
+                timestamp_ns=latest_joints.timestamp_ns,
             )
+            np.copyto(self._quat_xyzw_snapshot, self.quat_xyzw)
+            np.copyto(self._quat_wxyz_snapshot, self.quat_wxyz)
+            np.copyto(self._omega_snapshot, self.omega)
+            np.copyto(self._cmd_snapshot, self.raw_cmd_vel)
             events = tuple(self.pending_remote_events)
             self.pending_remote_events.clear()
-        return observation, events
+        assert self._observation is not None
+        return self._observation, events
 
     def publish_motor_frame(self, frame: MotorFrame):
         """Convert a framework motor frame into the ELF3 ROS command message."""
         msg = bxiMsg.ActuatorCmds()
         msg.header.frame_id = robot_name
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.actuators_name = joint_name
+        msg.actuators_name = frame.layout.names
+        if len(self._zero_actuator_values) != frame.layout.dof_num:
+            self._zero_actuator_values = [0.0] * frame.layout.dof_num
         msg.pos = frame.qpos.tolist()
         msg.vel = self._zero_actuator_values
         msg.torque = self._zero_actuator_values
@@ -334,20 +376,38 @@ class BxiExample(Node):
         self.sim_rest_srv.call_async(req)
 
     def joint_callback(self, msg):
-        joint_pos = msg.position
-        joint_vel = msg.velocity
-
-        with self.lock_in:
-            self.qpos[:] = np.array(joint_pos[:])
-            self.qvel[:] = np.array(joint_vel[:])
+        self._update_joint_state(msg.name, msg.position, msg.velocity)
 
     def actuator_callback(self, msg):
-        joint_pos = msg.position
-        joint_vel = msg.velocity
+        self._update_joint_state(msg.name, msg.position, msg.velocity)
 
+    def _update_joint_state(self, names, position, velocity):
         with self.lock_in:
-            self.qpos[:] = np.array(joint_pos[:])
-            self.qvel[:] = np.array(joint_vel[:])
+            try:
+                latest = self._joint_source.update(
+                    names,
+                    position,
+                    velocity,
+                    timestamp_ns=self.get_clock().now().nanoseconds,
+                )
+            except (TypeError, ValueError) as exc:
+                if not self._bad_joint_state_warned:
+                    self.get_logger().error(f"invalid named joint state: {exc}")
+                    self._bad_joint_state_warned = True
+                return
+
+            if self._joint_snapshot.layout != latest.layout:
+                self._joint_snapshot = JointStateBuffer(
+                    latest.layout,
+                    dtype=np.float64,
+                )
+                self._observation.joints = self._joint_snapshot.view
+                self.get_logger().info(
+                    "ELF3 state layout initialized from message names: "
+                    f"{latest.layout.dof_num} joints"
+                )
+            self._joint_received = True
+            self._bad_joint_state_warned = False
 
     def joy_callback(self, msg):
         events = self.runtime.extract_remote_events(msg, sync_only=self.step < 2)
@@ -366,13 +426,10 @@ class BxiExample(Node):
         quat = msg.orientation
         avel = msg.angular_velocity
 
-        quat_tmp1 = np.array([quat.x, quat.y, quat.z, quat.w]).astype(np.double)
-        quat_tmp2 = np.array([quat.w, quat.x, quat.y, quat.z]).astype(np.double)
-
         with self.lock_in:
-            self.quat_xyzw = quat_tmp1
-            self.quat_wxyz = quat_tmp2
-            self.omega = np.array([avel.x, avel.y, avel.z])
+            self.quat_xyzw[:] = quat.x, quat.y, quat.z, quat.w
+            self.quat_wxyz[:] = quat.w, quat.x, quat.y, quat.z
+            self.omega[:] = avel.x, avel.y, avel.z
 
     def touch_callback(self, _msg):
         pass
