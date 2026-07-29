@@ -172,7 +172,7 @@ class RobotControlState(StateBehavior[RobotControlContext], ABC):
             frame.layout is not layout and frame.layout != layout
         ):
             frame = MotorFrame.empty(layout)
-            self._motor_frame_buffer = frame
+            self._motor_frame_buffer = frame 
         return frame.update(qpos, kp, kd)
 
     def _motor_frame_from_target(
