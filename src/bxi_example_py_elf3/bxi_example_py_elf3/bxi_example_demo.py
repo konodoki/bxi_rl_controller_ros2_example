@@ -396,12 +396,7 @@ class BxiExample(Node):
                     self._bad_joint_state_warned = True
                 return
 
-            if self._joint_snapshot.layout != latest.layout:
-                self._joint_snapshot = JointStateBuffer(
-                    latest.layout,
-                    dtype=np.float64,
-                )
-                self._observation.joints = self._joint_snapshot.view
+            if not self._joint_received:
                 self.get_logger().info(
                     "ELF3 state layout initialized from message names: "
                     f"{latest.layout.dof_num} joints"
