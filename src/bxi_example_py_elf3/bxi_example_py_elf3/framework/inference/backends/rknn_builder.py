@@ -25,6 +25,7 @@ _ENV_KEYS = {
     "dataset",
     "config",
     "force_rebuild",
+    "outputs",
 }
 _TOOLKIT_INSTALL_HINT = (
     "install the official rknn-toolkit2 wheel matching your Python version "
@@ -49,6 +50,7 @@ class _ConversionSettings:
     dataset: Path | None = None
     config: tuple[tuple[str, object], ...] = ()
     force_rebuild: bool = False
+    output_names: tuple[str, ...] = ()
 
 
 def _environment_settings(artifact: RknnArtifact) -> _ConversionSettings:
@@ -110,6 +112,16 @@ def _environment_settings(artifact: RknnArtifact) -> _ConversionSettings:
     if not isinstance(force_rebuild, bool):
         raise ValueError("RKNN force_rebuild must be true or false")
 
+    output_value = overrides.get("outputs", artifact.conversion_output_names)
+    if isinstance(output_value, str):
+        output_names = (output_value,)
+    elif isinstance(output_value, (list, tuple)):
+        if not all(isinstance(item, str) and item for item in output_value):
+            raise ValueError("RKNN outputs must be non-empty strings")
+        output_names = tuple(output_value)
+    else:
+        raise ValueError("RKNN outputs must be a string or string list")
+
     return _ConversionSettings(
         True,
         target=target,
@@ -117,6 +129,7 @@ def _environment_settings(artifact: RknnArtifact) -> _ConversionSettings:
         dataset=dataset,
         config=tuple(config.items()),
         force_rebuild=force_rebuild,
+        output_names=output_names,
     )
 
 
@@ -237,6 +250,7 @@ def _fingerprint(
         "do_quantization": settings.do_quantization,
         "dataset": dataset,
         "config": _json_value(dict(settings.config)),
+        "outputs": list(settings.output_names),
     }
 
 
@@ -290,8 +304,15 @@ def _convert(
 ) -> None:
     try:
         rknn_type = _rknn_api()
-    except (ImportError, ModuleNotFoundError) as exc:
-        raise ModuleNotFoundError(_TOOLKIT_INSTALL_HINT) from exc
+    except ModuleNotFoundError as exc:
+        if exc.name == "rknn" or (exc.name and exc.name.startswith("rknn.")):
+            raise ModuleNotFoundError(_TOOLKIT_INSTALL_HINT) from exc
+        raise RuntimeError(
+            f"RKNN Toolkit dependency is missing: {exc.name}; install it into "
+            "the active Python environment"
+        ) from exc
+    except ImportError as exc:
+        raise RuntimeError(f"RKNN Toolkit import failed: {exc}") from exc
 
     fingerprint = _fingerprint(
         source,
@@ -314,7 +335,10 @@ def _convert(
                 **dict(settings.config),
             ),
         )
-        _check_result("load_onnx", converter.load_onnx(model=str(source)))
+        load_arguments: dict[str, object] = {"model": str(source)}
+        if settings.output_names:
+            load_arguments["outputs"] = list(settings.output_names)
+        _check_result("load_onnx", converter.load_onnx(**load_arguments))
         build_arguments: dict[str, object] = {
             "do_quantization": settings.do_quantization
         }
