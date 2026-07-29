@@ -65,6 +65,7 @@ class BenchmarkCase:
     factory: object
     artifact: object
     requested_device: str | None = None
+    output_names: tuple[str, ...] | None = None
 
 
 def _distribution_version(name: str) -> str | None:
@@ -440,6 +441,9 @@ def _cases_for_model(
     else:
         rknn_path = _cached_rknn_path(model.path, rknn_cache)
     if adjacent_rknn.is_file() or rknn_path.is_file() or conversion_enabled:
+        rknn_outputs = tuple(item.name for item in model.outputs if item.name == "actions")
+        if not rknn_outputs and model.outputs:
+            rknn_outputs = (model.outputs[0].name,)
         cases.append(
             BenchmarkCase(
                 "rknn",
@@ -448,6 +452,7 @@ def _cases_for_model(
                     rknn_path,
                     target=rknn_target,
                     source_onnx=model.path,
+                    conversion_output_names=rknn_outputs,
                     input_shapes=tuple(
                         (item.name, tuple(_json_shape(item.shape)))
                         for item in model.inputs
@@ -455,9 +460,11 @@ def _cases_for_model(
                     output_shapes=tuple(
                         (item.name, tuple(_json_shape(item.shape)))
                         for item in model.outputs
+                        if item.name in rknn_outputs
                     ),
                 ),
                 requested_device=rknn_target,
+                output_names=rknn_outputs,
             )
         )
     return cases
@@ -593,7 +600,7 @@ def _run_case(
     spec = ModelSpec(
         artifacts=(case.artifact,),
         input_names=tuple(item.name for item in model.inputs),
-        output_names=tuple(item.name for item in model.outputs),
+        output_names=case.output_names or tuple(item.name for item in model.outputs),
     )
     backend = None
     try:
@@ -639,6 +646,11 @@ def _worker_case(args: argparse.Namespace, model: ModelInfo) -> BenchmarkCase:
             requested_device=device,
         )
     if args.worker_backend == "rknn":
+        output_names = tuple(args.worker_output) or tuple(
+            item.name for item in model.outputs if item.name == "actions"
+        )
+        if not output_names and model.outputs:
+            output_names = (model.outputs[0].name,)
         return BenchmarkCase(
             "rknn",
             RknnBackendFactory(),
@@ -646,15 +658,18 @@ def _worker_case(args: argparse.Namespace, model: ModelInfo) -> BenchmarkCase:
                 path,
                 target=args.rknn_target,
                 source_onnx=model.path,
+                conversion_output_names=output_names,
                 input_shapes=tuple(
                     (item.name, tuple(_json_shape(item.shape))) for item in model.inputs
                 ),
                 output_shapes=tuple(
                     (item.name, tuple(_json_shape(item.shape)))
                     for item in model.outputs
+                    if item.name in output_names
                 ),
             ),
             requested_device=args.rknn_target,
+            output_names=output_names,
         )
     raise ValueError(f"unknown benchmark worker backend: {args.worker_backend}")
 
@@ -758,6 +773,9 @@ def _run_case_isolated(
                 command.extend(("--_worker-provider", provider))
         if args.rknn_target:
             command.extend(("--rknn-target", args.rknn_target))
+        if case.output_names:
+            for output_name in case.output_names:
+                command.extend(("--_worker-output", output_name))
         for name, shape in args.shape_overrides.items():
             command.extend(("--shape", f"{name}=" + ",".join(map(str, shape))))
 
@@ -991,6 +1009,13 @@ def _arguments() -> argparse.Namespace:
         "--_worker-outputs",
         dest="worker_outputs",
         type=Path,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--_worker-output",
+        dest="worker_output",
+        action="append",
+        default=[],
         help=argparse.SUPPRESS,
     )
     args = parser.parse_args()

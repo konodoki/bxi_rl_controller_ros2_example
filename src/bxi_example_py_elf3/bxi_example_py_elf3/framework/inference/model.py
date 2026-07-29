@@ -31,6 +31,7 @@ class RknnArtifact(ModelArtifact):
     do_quantization: bool = False
     dataset: str | Path | None = None
     build_config: tuple[tuple[str, object], ...] = ()
+    conversion_output_names: tuple[str, ...] = ()
     core_mask: object | None = None
     input_shapes: tuple[tuple[str, tuple[int, ...]], ...] = ()
     output_shapes: tuple[tuple[str, tuple[int, ...]], ...] = ()

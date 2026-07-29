@@ -46,12 +46,28 @@ BXI_RKNN_CONVERT_ON_LOAD=rk3588 \
 python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
 ```
 
+The benchmark converts only the policy output named `actions` by default. This
+also avoids an RKNN Toolkit 2.3.2 optimizer bug in ONNX models that expose
+several differently shaped reference-trajectory outputs. Select outputs
+explicitly when needed:
+
+```bash
+BXI_RKNN_CONVERT_ON_LOAD='{"target":"rk3588","outputs":["actions"],"force_rebuild":true}' \
+python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
+```
+
 For quantized conversion:
 
 ```bash
 BXI_RKNN_CONVERT_ON_LOAD='{"target":"rk3588","do_quantization":true,"dataset":"/data/calibration.txt"}' \
 python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
 ```
+
+Use `rknn-toolkit2` on x86_64 to convert models and
+`rknn-toolkit-lite2` on RK3588 to execute and benchmark the generated models.
+An x86 run that converts successfully and then reports `rknnlite is not
+installed` has completed the conversion; copy the ignored RKNN cache to the
+same path on the target board for NPU measurement.
 
 Keep the machine idle, use the same power mode, and use the same benchmark
 settings when comparing reports from different platforms. The first backend in
