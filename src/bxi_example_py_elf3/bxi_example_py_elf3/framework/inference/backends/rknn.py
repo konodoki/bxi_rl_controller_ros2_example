@@ -82,6 +82,11 @@ class RknnBackend(InferenceBackend):
         for index, name in enumerate(self.input_names):
             self._ordered_inputs[index] = inputs[name]
         values = self._runtime.inference(inputs=self._ordered_inputs)
+        if values is None:
+            raise RuntimeError(
+                "RKNN inference returned no outputs; check that the provided "
+                "logical inputs match the converted RKNN model inputs"
+            )
         if len(values) < len(self.output_names):
             raise RuntimeError(
                 f"RKNN returned {len(values)} outputs, expected {len(self.output_names)}"
