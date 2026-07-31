@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
-from typing import Generic, TypeVar
+from collections.abc import Mapping, Sequence
+from typing import Any, Generic, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
 
-from .context import RobotControlContext
+from .context import LoggerLike, RobotControlContext
 from .frame import MotorFrame
+from .resource import ResourceHandle
 from bxi_example_py_elf3.framework.joints import JointLayout, JointTargetView
 
 
@@ -48,7 +49,7 @@ class StateBehavior(Generic[CtxT]):
         return True
 
     def on_prepare(self, ctx: CtxT, from_state: "StateBehavior[CtxT]") -> None:
-        pass
+        """Prepare non-blocking state data immediately before a transition."""
 
     def on_prepare_cancel(
         self,
@@ -74,12 +75,35 @@ class StateBehavior(Generic[CtxT]):
 class RobotControlState(StateBehavior[RobotControlContext], ABC):
     """Main extensibility point for states that control the robot."""
 
-    def __init__(self, name: str, state_id: int):
+    def __init__(
+        self,
+        name: str,
+        state_id: int,
+        *,
+        resources: Sequence[ResourceHandle[Any]] = (),
+    ):
         super().__init__(name, state_id)
+        self._required_resources = tuple(resources)
+        self._logger: LoggerLike | None = None
         self.speed_profile_name: str | None = None
         self._missing_speed_profile_warned = False
         self._cmd_vel_buffer = np.zeros(3, dtype=np.float32)
         self._motor_frame_buffer: MotorFrame | None = None
+
+    @property
+    def required_resources(self) -> tuple[ResourceHandle[Any], ...]:
+        """Resources that must be READY before a transition can start."""
+        return self._required_resources
+
+    @property
+    def logger(self) -> LoggerLike:
+        logger = self._logger
+        if logger is None:
+            raise RuntimeError(f"state '{self.name}' logger is not bound")
+        return logger
+
+    def _bind_logger(self, logger: LoggerLike) -> None:
+        self._logger = logger
 
     def on_bind(self, ctx: RobotControlContext) -> None:
         """Called once after construction and before the state machine starts."""
@@ -93,7 +117,7 @@ class RobotControlState(StateBehavior[RobotControlContext], ABC):
         ctx: RobotControlContext,
         from_state: StateBehavior[RobotControlContext],
     ) -> None:
-        """Prepare resources before a transition; do not emit motor output."""
+        """Prepare state data without loading resources or blocking control."""
 
     def on_prepare_cancel(
         self,
@@ -127,15 +151,11 @@ class RobotControlState(StateBehavior[RobotControlContext], ABC):
         profile = profiles.get(self.speed_profile_name)
         if not isinstance(profile, Mapping):
             if not self._missing_speed_profile_warned:
-                logger = getattr(ctx, "get_logger", None)
                 message = (
                     f"state '{self.name}' references unknown speed_profile "
                     f"'{self.speed_profile_name}'"
                 )
-                if callable(logger):
-                    logger().warning(message)
-                else:
-                    print(message)
+                self.logger.warning(message)
                 self._missing_speed_profile_warned = True
             return self._cmd_vel_buffer
 

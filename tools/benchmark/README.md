@@ -51,6 +51,7 @@ benchmark cache instead of beside source assets. An unquantized conversion can
 still be requested directly:
 
 ```bash
+PYTHONNOUSERSITE=1 \
 BXI_RKNN_CONVERT_ON_LOAD=rk3588 \
 python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
 ```
@@ -68,31 +69,43 @@ python3 tools/benchmark/backend_benchmark.py --rknn-target rk3588
 ### Capture and build a representative INT8 model
 
 Do not calibrate a control policy with the benchmark's random tensors. Capture
-the final, preprocessed tensors seen by the policy on the robot instead. The
-depth policy has a non-blocking recorder for this purpose: the control thread
-only takes an in-memory snapshot, while a background thread writes the `.npy`
-files and ordered `dataset.txt`.
+the final, preprocessed tensors seen by the policy on the robot instead.
+`collect_calibration.py` launches the application with a tool-side proxy around
+every inference backend opened through `InferenceRuntime`. It therefore works
+for every framework policy and every registered backend without adding capture
+branches or lifecycle code to production policies.
 
 Build and source the package, then start the hardware launch with:
 
 ```bash
-BXI_RKNN_CALIBRATION_DIR=/tmp/bxi_rknn_calibration \
-BXI_RKNN_CALIBRATION_EVERY=5 \
-BXI_RKNN_CALIBRATION_MAX=500 \
-ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py
+python3 tools/benchmark/collect_calibration.py \
+  --output /tmp/bxi_rknn_calibration \
+  --every 5 \
+  --max-samples 500 \
+  --skip-first 10 \
+  -- ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py
 ```
 
-Enter depth walking and exercise representative standing, forward, turning,
-obstacle and open-space situations. The default `origin_camera` mode writes:
+The proxy records the ordered input mapping passed to `backend.run()`, after all
+policy preprocessing and history assembly. The initial calls are skipped so
+model warmup does not contaminate the dataset. Each model receives its own
+directory named after its source model. For example, default `origin_camera`
+depth walking writes:
 
 ```text
 /tmp/bxi_rknn_calibration/dagger2/dataset.txt
 ```
 
-Only the active policy is sampled. To capture the legacy `normal_depth` model,
-change the Mod state's mode to `depth_walk`, rebuild/restart, and perform a
-second run. Existing samples are resumed until `BXI_RKNN_CALIBRATION_MAX` is
-reached. Use a new empty root when intentionally starting a new dataset.
+Only backends that actually execute are sampled. Exercise representative states
+and commands for every model being calibrated. Existing samples are resumed
+until `--max-samples` is reached; model hashes and input contracts prevent an
+unrelated model from being appended to the same directory. Use a new empty root
+when intentionally starting a new dataset.
+
+This launcher affects only Python processes started by that command and leaves
+the installed framework unchanged. Collection intentionally copies inputs on
+the inference thread and must be used for dataset generation, not latency or
+real-time performance measurements.
 
 Copy the calibration root to the x86_64 RKNN Toolkit2 machine. Validate both
 datasets without converting:
@@ -191,3 +204,53 @@ cross-platform report (the report directory remains ignored):
 python3 tools/benchmark/joint_mapping_benchmark.py \
   --json tools/benchmark/results/joints-my-platform.json
 ```
+
+## Framework cycle overhead
+
+Measure the fixed cost of the production control-cycle boundaries without adding
+profiling hooks to the framework:
+
+```bash
+source /opt/ros/humble/setup.bash
+python3 tools/benchmark/framework_performance.py \
+  --json tools/benchmark/results/framework-my-platform.json
+```
+
+The script creates a temporary API-3 Mod with one allocation-free hold state and
+calls the same cycle boundary used by `RobotControlRuntime`. It reports platform
+input snapshot, framework update, actuator publication, their accounted sum and
+the complete wall-clock call. This deliberately measures the framework's fixed
+overhead; model inference belongs in `inference_benchmark.py`, and hardware/ROS
+message conversion remains visible in the running controller's periodic timing
+report.
+
+The report also compares sleeping-process CPU time with and without an idle
+`SubprocessLogRouter`, making the background cost of process log collection
+visible. Use identical affinity, governor, power mode and command arguments when
+comparing machines or revisions.
+
+## Live process scheduling inspection
+
+Inspect the main controller, all descendants and every Linux thread without
+changing or importing anything in the target process:
+
+```bash
+python3 tools/diagnostics/process_scheduling.py --pid PID
+
+# Two samples are needed for CPU percentages.
+python3 tools/diagnostics/process_scheduling.py \
+  --pid PID --count 10 --interval 1 \
+  --json tools/benchmark/results/scheduling-my-platform.json
+
+# PID discovery is also available when the regular expression matches once.
+python3 tools/diagnostics/process_scheduling.py \
+  --match 'bxi_example_py_elf3.*mod_node_runner'
+```
+
+Linux affinity and scheduling policy are per-thread. The table therefore shows
+each TID separately, including last CPU, effective affinity, `SCHED_*` policy,
+reset-on-fork, RT priority, nice value, kernel priority, context switches and
+CPU migrations. Process sections add PID/PPID/PGRP/session, cgroup CPU/cpuset
+limits, OOM adjustment and realtime/nice resource limits. The first snapshot
+also prints topology, frequency/governor information and the kernel RT runtime
+limit for every CPU available to the observed tree.

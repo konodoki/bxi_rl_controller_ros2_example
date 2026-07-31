@@ -31,7 +31,7 @@ HELLO_WAVE_JOINTS = JointLayout(
     label="hello wave command",
 )
 HELLO_HEAD_JOINTS = JointLayout(
-    ("neck_y_joint", "neck_z_joint"),
+    ("head_y_joint", "head_z_joint"),
     label="hello head command",
 )
 HELLO_OUTPUT_JOINTS = JointLayout(
@@ -53,7 +53,7 @@ class HelloState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         state_id: int,
         policy: ResourceHandle[HumanoidGaitPolicyLiteIsaaclab],
     ) -> None:
-        super().__init__(name, state_id)
+        super().__init__(name, state_id, resources=(policy,))
         self._policy = policy
         self.playing = True
         self.shaketime = 0
