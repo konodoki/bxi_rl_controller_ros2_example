@@ -2,36 +2,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-import os
 from threading import current_thread, Event, Lock, Thread
 import time
-from typing import Protocol
 
 import numpy as np
 
-
-class LoggerLike(Protocol):
-    def info(self, message: str) -> None:
-        ...
-
-    def warning(self, message: str) -> None:
-        ...
-
-    def error(self, message: str) -> None:
-        ...
+from bxi_example_py_elf3.framework.mod_api.context import LoggerLike
+from bxi_example_py_elf3.framework.platform.cpu_affinity import (
+    configure_current_thread,
+    format_cpu_set,
+)
 
 
 @dataclass(frozen=True)
-class ControlCycleMetrics:
-    """Measurements produced by one platform-specific control cycle."""
+class ControlCycleResult:
+    """State produced by one platform-specific control cycle."""
 
     state: str
     active: bool = True
-    snapshot_ns: int = 0
-    framework_ns: int = 0
-    publish_ns: int = 0
 
 
 def _percentile_summary(values_ns: list[int]) -> dict[str, float]:
@@ -51,20 +41,50 @@ def _percentile_summary(values_ns: list[int]) -> dict[str, float]:
     }
 
 
+def _normalize_cpu_affinity(
+    value: int | Iterable[int] | None,
+) -> frozenset[int] | None:
+    """Keep the legacy single-CPU form while accepting resolved CPU sets."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("control CPU affinity must contain CPU indices")
+    if isinstance(value, int):
+        if value == -1:
+            return None
+        if value < 0:
+            raise ValueError("control CPU affinity must be -1 or non-negative")
+        return frozenset((value,))
+    if isinstance(value, (str, bytes)):
+        raise ValueError("control CPU affinity must contain CPU indices")
+    try:
+        cpus = frozenset(value)
+    except TypeError as exc:
+        raise ValueError("control CPU affinity must contain CPU indices") from exc
+    if not cpus:
+        raise ValueError("control CPU affinity must not be empty")
+    if any(
+        isinstance(cpu, bool) or not isinstance(cpu, int) or cpu < 0
+        for cpu in cpus
+    ):
+        raise ValueError("control CPU affinity must contain non-negative indices")
+    return cpus
+
+
 class ControlScheduler:
     """Run all framework states on one drift-free, absolute time line."""
 
     def __init__(
         self,
-        cycle: Callable[[], ControlCycleMetrics],
+        cycle: Callable[[], ControlCycleResult],
         *,
         period_sec: float,
         compute_budget_sec: float,
         deadline_tolerance_sec: float = 0.001,
         spin_wait_us: int = -1,
-        cpu_affinity: int = -1,
+        cpu_affinity: int | Iterable[int] | None = None,
         realtime_priority: int = 0,
-        logger: LoggerLike | None = None,
+        logger: LoggerLike,
         fatal_callback: Callable[[str], None] | None = None,
         deadline_miss_callback: Callable[[dict[str, object]], None] | None = None,
         thread_name: str = "bxi-control",
@@ -82,8 +102,7 @@ class ControlScheduler:
             raise ValueError(
                 f"control spin wait must be -1 or in [0, {period_us}) microseconds"
             )
-        if cpu_affinity < -1:
-            raise ValueError("control CPU affinity must be -1 or a CPU index")
+        resolved_cpu_affinity = _normalize_cpu_affinity(cpu_affinity)
         if realtime_priority < 0 or realtime_priority > 99:
             raise ValueError("control realtime priority must be in [0, 99]")
 
@@ -94,7 +113,7 @@ class ControlScheduler:
             round(deadline_tolerance_sec * 1_000_000_000.0)
         )
         self.spin_wait_ns = -1 if spin_wait_us < 0 else int(spin_wait_us) * 1_000
-        self.cpu_affinity = int(cpu_affinity)
+        self.cpu_affinity = resolved_cpu_affinity
         self.realtime_priority = int(realtime_priority)
         self._logger = logger
         self._fatal_callback = fatal_callback
@@ -136,7 +155,9 @@ class ControlScheduler:
         self._thread = thread
         thread.start()
         cpu_description = (
-            "未绑定" if self.cpu_affinity < 0 else str(self.cpu_affinity)
+            "未绑定"
+            if self.cpu_affinity is None
+            else format_cpu_set(self.cpu_affinity)
         )
         priority_description = (
             "普通调度"
@@ -174,9 +195,6 @@ class ControlScheduler:
             wake = list(self._wake_ns)
             cycle = list(self._cycle_ns)
             frame_interval = list(self._frame_interval_ns)
-            snapshot = list(self._snapshot_ns)
-            framework = list(self._framework_ns)
-            publish = list(self._publish_ns)
             finish_late = list(self._finish_late_ns)
             window_cycles = self._window_cycles
             window_budget_overruns = self._window_budget_overruns
@@ -206,9 +224,6 @@ class ControlScheduler:
             "wake_late_ms": _percentile_summary(wake),
             "cycle_ms": _percentile_summary(cycle),
             "frame_interval_ms": _percentile_summary(frame_interval),
-            "snapshot_ms": _percentile_summary(snapshot),
-            "framework_ms": _percentile_summary(framework),
-            "publish_ms": _percentile_summary(publish),
             "finish_late_ms": _percentile_summary(finish_late),
             "last_miss": last_miss,
             "fatal_error": fatal_error,
@@ -248,9 +263,9 @@ class ControlScheduler:
             wake_ns = time.monotonic_ns()
             cycle_started_ns = wake_ns
             try:
-                metrics = self._cycle()
-                if not isinstance(metrics, ControlCycleMetrics):
-                    raise TypeError("control cycle must return ControlCycleMetrics")
+                result = self._cycle()
+                if not isinstance(result, ControlCycleResult):
+                    raise TypeError("control cycle must return ControlCycleResult")
             except BaseException as exc:
                 message = f"control scheduler stopped after cycle failure: {exc}"
                 with self._stats_lock:
@@ -268,7 +283,7 @@ class ControlScheduler:
                 break
             finished_ns = time.monotonic_ns()
 
-            if not metrics.active:
+            if not result.active:
                 last_active_started_ns = None
                 release_ns = self._next_release_after(release_ns, finished_ns)
                 continue
@@ -307,7 +322,7 @@ class ControlScheduler:
                 next_release_ns += skipped_periods * self.period_ns
 
             miss_event = self._record_cycle(
-                metrics,
+                result,
                 wake_late_ns=wake_late_ns,
                 cycle_ns=cycle_ns,
                 frame_interval_ns=frame_interval_ns,
@@ -357,7 +372,7 @@ class ControlScheduler:
 
     def _record_cycle(
         self,
-        metrics: ControlCycleMetrics,
+        result: ControlCycleResult,
         *,
         wake_late_ns: int,
         cycle_ns: int,
@@ -371,13 +386,10 @@ class ControlScheduler:
         with self._stats_lock:
             self._window_cycles += 1
             self._total_cycles += 1
-            self._last_state = metrics.state
+            self._last_state = result.state
             self._wake_ns.append(wake_late_ns)
             self._cycle_ns.append(cycle_ns)
             self._frame_interval_ns.append(frame_interval_ns)
-            self._snapshot_ns.append(max(0, int(metrics.snapshot_ns)))
-            self._framework_ns.append(max(0, int(metrics.framework_ns)))
-            self._publish_ns.append(max(0, int(metrics.publish_ns)))
             self._finish_late_ns.append(finish_late_ns)
             if budget_overrun:
                 self._window_budget_overruns += 1
@@ -388,7 +400,7 @@ class ControlScheduler:
                 self._window_deadline_misses += 1
                 self._total_deadline_misses += 1
                 miss_event = {
-                    "state": metrics.state,
+                    "state": result.state,
                     "wake_late_ms": wake_late_ns / 1_000_000.0,
                     "cycle_ms": cycle_ns / 1_000_000.0,
                     "finish_late_ms": finish_late_ns / 1_000_000.0,
@@ -398,35 +410,32 @@ class ControlScheduler:
         return dict(miss_event) if miss_event is not None else None
 
     def _configure_current_thread(self) -> None:
-        if self.cpu_affinity >= 0:
-            try:
-                os.sched_setaffinity(0, {self.cpu_affinity})
-            except (AttributeError, OSError) as exc:
-                self._log(
-                    "warning",
-                    f"cannot set control CPU affinity to {self.cpu_affinity}: {exc}",
-                )
-        if self.realtime_priority > 0:
-            try:
-                os.sched_setscheduler(
-                    0,
-                    os.SCHED_FIFO,
-                    os.sched_param(self.realtime_priority),
-                )
-            except (AttributeError, OSError) as exc:
-                self._log(
-                    "warning",
-                    "cannot enable SCHED_FIFO for control thread; "
-                    f"using normal scheduling: {exc}",
-                )
+        cpu_description = (
+            "inherit"
+            if self.cpu_affinity is None
+            else format_cpu_set(self.cpu_affinity)
+        )
+        try:
+            configure_current_thread(
+                self.cpu_affinity,
+                realtime_priority=self.realtime_priority,
+            )
+        except (AttributeError, OSError) as exc:
+            policy = (
+                "SCHED_OTHER"
+                if self.realtime_priority == 0
+                else f"SCHED_FIFO/{self.realtime_priority}"
+            )
+            self._log(
+                "warning",
+                "cannot configure control thread scheduling: "
+                f"CPU={cpu_description}, policy={policy}: {exc}",
+            )
 
     def _reset_window_locked(self) -> None:
         self._wake_ns: list[int] = []
         self._cycle_ns: list[int] = []
         self._frame_interval_ns: list[int] = []
-        self._snapshot_ns: list[int] = []
-        self._framework_ns: list[int] = []
-        self._publish_ns: list[int] = []
         self._finish_late_ns: list[int] = []
         self._window_cycles = 0
         self._window_budget_overruns = 0
@@ -435,8 +444,6 @@ class ControlScheduler:
 
     def _log(self, level: str, message: str) -> None:
         logger = self._logger
-        if logger is None:
-            return
         try:
             # rclpy binds severity to a Python log call's source location.
             # A shared dynamic call line can emit INFO once and then reject a
@@ -453,4 +460,4 @@ class ControlScheduler:
             pass
 
 
-__all__ = ["ControlCycleMetrics", "ControlScheduler", "LoggerLike"]
+__all__ = ["ControlCycleResult", "ControlScheduler"]

@@ -1,3 +1,10 @@
+from bxi_example_py_elf3.framework.platform.cpu_affinity import (
+    bootstrap_process_scheduling,
+    CpuAffinityPlan,
+)
+
+_CPU_AFFINITY_PLAN = bootstrap_process_scheduling()
+
 import rclpy
 from rclpy.node import Node
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
@@ -67,8 +74,8 @@ ELF3_RESET_JOINTS = JointLayout(
         "r_wrist_x_joint",
         "r_wrist_y_joint",
         "r_wrist_z_joint",
-        "neck_z_joint",
-        "neck_y_joint",
+        "head_z_joint",
+        "head_y_joint",
     ),
     label="ELF3 simulation reset",
 )
@@ -76,20 +83,20 @@ ELF3_RESET_JOINTS = JointLayout(
 dof_num = ELF3_RESET_JOINTS.dof_num
 joint_name = ELF3_RESET_JOINTS.names
 
-# The current ELF3 state message contains two neck joints that the original
+# The current ELF3 state message contains two head joints that the original
 # 29-joint policies do not command. A future 31-joint policy overrides these
 # values naturally because defaults are only applied to omitted joints. Name
 # lookup is compiled once; the control-cycle path performs no dictionary lookup.
 ELF3_COMMAND_DEFAULTS = JointCommandDefaults(
     {
-        "neck_y_joint": JointDefault(position=0.0, kp=16.747, kd=1.066),
-        "neck_z_joint": JointDefault(position=0.0, kp=16.747, kd=1.066),
+        "head_y_joint": JointDefault(position=0.0, kp=16.747, kd=1.066),
+        "head_z_joint": JointDefault(position=0.0, kp=16.747, kd=1.066),
     }
 )
 
 
 class BxiExample(Node):
-    def __init__(self):
+    def __init__(self, *, cpu_affinity_plan: CpuAffinityPlan):
         super().__init__("bxi_example_py")
 
         self._shutting_down = Event()
@@ -127,7 +134,7 @@ class BxiExample(Node):
             command_defaults=ELF3_COMMAND_DEFAULTS,
             ros_node=self,
             platform=self,
-            logger=self.get_logger(),
+            cpu_affinity_plan=cpu_affinity_plan,
             fatal_callback=self._on_control_fatal,
         )
         self.state_machine_info_timer = None
@@ -443,11 +450,10 @@ class BxiExample(Node):
 
 
 def main(args=None):
-
     time.sleep(5)
 
     rclpy.init(args=args)
-    node = BxiExample()
+    node = BxiExample(cpu_affinity_plan=_CPU_AFFINITY_PLAN)
 
     executor = MultiThreadedExecutor(num_threads=3)
     try:

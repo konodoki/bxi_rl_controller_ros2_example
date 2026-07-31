@@ -12,17 +12,25 @@ from threading import current_thread, Event, Lock, Thread
 import time
 from typing import Callable
 
+from rclpy.logging import get_logger
+
 from bxi_example_py_elf3.framework.joints import JointCommandDefaults
 from bxi_example_py_elf3.framework.mod_api import TransitionSpec
 
 from bxi_example_py_elf3.framework.runtime.control_scheduler import (
-    ControlCycleMetrics,
+    ControlCycleResult,
     ControlScheduler,
-    LoggerLike,
 )
 from bxi_example_py_elf3.framework.runtime.controller import RobotControlFramework
+from bxi_example_py_elf3.framework.runtime.logging import LoggingConfig, ScopedLoggers
 from bxi_example_py_elf3.framework.runtime.mod_nodes import ExecutorLike
 from .api import ControlPlatformAdapter
+from .cpu_affinity import (
+    CpuAffinityPlan,
+    CpuAffinityRole,
+    CpuAffinitySpec,
+    read_cpu_affinity,
+)
 
 
 @dataclass(frozen=True)
@@ -38,7 +46,9 @@ class ControlRuntimeConfig:
     maintenance_guard_sec: float = 0.005
     python_switch_interval_sec: float = 0.001
     spin_wait_us: int = -1
-    cpu_affinity: int = -1
+    cpu_affinity: CpuAffinitySpec = CpuAffinitySpec(
+        role=CpuAffinityRole.CONTROL
+    )
     realtime_priority: int = 0
 
     @classmethod
@@ -100,7 +110,11 @@ class ControlRuntimeConfig:
                 defaults.python_switch_interval_sec,
             ),
             spin_wait_us=_integer(raw, "spin_wait_us", defaults.spin_wait_us),
-            cpu_affinity=_integer(raw, "cpu_affinity", defaults.cpu_affinity),
+            cpu_affinity=read_cpu_affinity(
+                raw.get("cpu_affinity"),
+                "control_runtime.cpu_affinity",
+                default=CpuAffinityRole.CONTROL,
+            ),
             realtime_priority=_integer(
                 raw, "realtime_priority", defaults.realtime_priority
             ),
@@ -146,8 +160,6 @@ class ControlRuntimeConfig:
                 "control_runtime.spin_wait_us must be -1 or in "
                 f"[0, {period_us})"
             )
-        if self.cpu_affinity < -1:
-            raise ValueError("control_runtime.cpu_affinity must be -1 or a CPU index")
         if not 0 <= self.realtime_priority <= 99:
             raise ValueError("control_runtime.realtime_priority must be in [0, 99]")
 
@@ -163,19 +175,26 @@ class RobotControlRuntime:
         command_defaults: JointCommandDefaults,
         ros_node: object,
         platform: ControlPlatformAdapter,
-        logger: LoggerLike | None = None,
+        cpu_affinity_plan: CpuAffinityPlan,
         fatal_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.config = ControlRuntimeConfig.from_mapping(
             system_config.get("control_runtime")
         )
+        self.logging_config = LoggingConfig.from_mapping(system_config.get("logging"))
         framework_config = {
             key: value
             for key, value in system_config.items()
-            if key != "control_runtime"
+            if key not in {"control_runtime", "logging"}
         }
         self._platform = platform
-        self._logger = logger
+        root_logger = ros_node.get_logger()
+        self.loggers = ScopedLoggers(
+            root_logger,
+            self.logging_config,
+            logger_factory=get_logger,
+        )
+        self._logger = self.loggers.framework("runtime")
         self._external_fatal_callback = fatal_callback
         self._framework_lock = Lock()
         self._stop_event = Event()
@@ -192,12 +211,20 @@ class RobotControlRuntime:
         self._last_reported_total_deadline_misses = 0
         self._last_reported_total_skipped_periods = 0
 
+        self.cpu_affinity_plan = cpu_affinity_plan
+        control_cpus = self.cpu_affinity_plan.resolve(
+            self.config.cpu_affinity,
+            context="control_runtime.cpu_affinity",
+        )
+
         self.framework = RobotControlFramework(
             framework_config,
             built_in_mod_root=built_in_mod_root,
             command_defaults=command_defaults,
             ros_node=ros_node,
+            loggers=self.loggers,
             control_period=self.config.period_sec,
+            cpu_affinity_plan=self.cpu_affinity_plan,
         )
         self.scheduler = ControlScheduler(
             self._run_control_cycle,
@@ -205,14 +232,14 @@ class RobotControlRuntime:
             compute_budget_sec=self.config.compute_budget_sec,
             deadline_tolerance_sec=self.config.deadline_tolerance_sec,
             spin_wait_us=self.config.spin_wait_us,
-            cpu_affinity=self.config.cpu_affinity,
+            cpu_affinity=control_cpus,
             realtime_priority=self.config.realtime_priority,
-            logger=logger,
+            logger=self.loggers.framework("scheduler"),
             fatal_callback=self._on_control_fatal,
             deadline_miss_callback=self._enqueue_deadline_miss,
         )
-        for message in self.framework.startup_messages():
-            self._log("info", message)
+        self._log("info", self.cpu_affinity_plan.describe())
+        self.framework.log_startup()
 
     @property
     def is_running(self) -> bool:
@@ -334,17 +361,14 @@ class RobotControlRuntime:
         info["events"] = list(self._last_control_events)
         return info
 
-    def _run_control_cycle(self) -> ControlCycleMetrics:
+    def _run_control_cycle(self) -> ControlCycleResult:
         if not self._platform.startup_step(time.monotonic()):
-            return ControlCycleMetrics(state="startup", active=False)
+            return ControlCycleResult(state="startup", active=False)
 
-        snapshot_started_ns = time.monotonic_ns()
         observation, events = self._platform.snapshot_control_inputs()
         events = tuple(events)
         self._last_control_events = events
-        snapshot_finished_ns = time.monotonic_ns()
 
-        framework_started_ns = snapshot_finished_ns
         with self._framework_lock:
             frame = self.framework.update(
                 observation,
@@ -352,18 +376,10 @@ class RobotControlRuntime:
                 self.config.period_sec,
             )
             state_name = self.framework.current_state_name
-        framework_finished_ns = time.monotonic_ns()
 
-        publish_started_ns = framework_finished_ns
         if frame is not None:
             self._platform.publish_motor_frame(frame)
-        publish_finished_ns = time.monotonic_ns()
-        return ControlCycleMetrics(
-            state=state_name,
-            snapshot_ns=snapshot_finished_ns - snapshot_started_ns,
-            framework_ns=framework_finished_ns - framework_started_ns,
-            publish_ns=publish_finished_ns - publish_started_ns,
-        )
+        return ControlCycleResult(state=state_name)
 
     def _maintenance_loop(self) -> None:
         period_sec = 1.0 / self.config.maintenance_hz
@@ -589,8 +605,6 @@ class RobotControlRuntime:
 
     def _log(self, level: str, message: str) -> bool:
         logger = self._logger
-        if logger is None:
-            return False
         try:
             # rclpy binds severity to the Python source location of a log call.
             # Keep each severity on a distinct call line instead of using one
