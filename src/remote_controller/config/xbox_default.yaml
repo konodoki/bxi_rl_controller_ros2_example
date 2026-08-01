@@ -445,6 +445,7 @@ system:
     - "killall -SIGINT hardware_elf3"
     - "killall -SIGINT bxi_example_py_elf3"
     - "killall -SIGINT bxi_example_py_elf3_demo"
+    - "pkill -SIGINT -f '[/]bxi_depth_camera/cameras|[b]xi_depth_camera\\.manager'"
     - "killall -SIGINT bxi_bms"
     - "killall -SIGINT bxi_example_bms"
     - "killall -SIGINT bxi-voice"
