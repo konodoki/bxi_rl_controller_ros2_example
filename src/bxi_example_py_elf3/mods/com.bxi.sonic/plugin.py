@@ -45,6 +45,10 @@ def _build_state(
             "gripper_release_threshold",
             0.05,
         ),
+        gripper_enable_interval_s=state.float_param(
+            "gripper_enable_interval_s",
+            1.0,
+        ),
         gripper_left_bus=state.int_param("gripper_left_bus", 5),
         gripper_right_bus=state.int_param("gripper_right_bus", 6),
         gripper_can_id=state.int_param("gripper_can_id", 1),
