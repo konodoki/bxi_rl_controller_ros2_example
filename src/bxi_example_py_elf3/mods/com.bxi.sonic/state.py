@@ -328,7 +328,7 @@ class SonicTeleopState(
 
     def _publish_gripper(self, bus: int, trigger: float) -> None:
         command = JointControl(
-            p_des=float((1.0 - trigger) * 0.5 - 0.1),
+            p_des=float((1.0 - trigger) * 5.0 - 0.1),
             kp=self._gripper_kp,
             kd=self._gripper_kd,
         )
