@@ -118,7 +118,7 @@ states:
       gripper_enable_interval_s: 1.0
       gripper_left_bus: 5
       gripper_right_bus: 6
-      gripper_can_id: 4
+      gripper_can_id: 1
       gripper_kp: 10.0
       gripper_kd: 0.5
 
