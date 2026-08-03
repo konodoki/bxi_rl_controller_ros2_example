@@ -120,8 +120,8 @@ states:
       gripper_left_bus: 5
       gripper_right_bus: 6
       gripper_can_id: 1
-      gripper_kp: 20.0
-      gripper_kd: 1.0
+      gripper_kp: 10.0
+      gripper_kd: 0.5
 
 routes:
   - from: com.bxi.basic_actions/normal
