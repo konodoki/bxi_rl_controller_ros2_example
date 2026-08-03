@@ -81,6 +81,7 @@ class SonicTeleopState(
         hardware_gripper: bool = False,
         gripper_input_timeout_s: float = 0.2,
         gripper_release_threshold: float = 0.05,
+        gripper_enable_interval_s: float = 1.0,
         gripper_left_bus: int = 5,
         gripper_right_bus: int = 6,
         gripper_can_id: int = 1,
@@ -90,6 +91,8 @@ class SonicTeleopState(
         super().__init__(name, state_id, resources=(policy,))
         if gripper_input_timeout_s <= 0.0:
             raise ValueError("gripper_input_timeout_s must be positive")
+        if gripper_enable_interval_s <= 0.0:
+            raise ValueError("gripper_enable_interval_s must be positive")
         self._policy = policy
         self.require_live_reference = bool(require_live_reference)
         self.yaw_bias_rad = float(yaw_bias_rad)
@@ -101,6 +104,7 @@ class SonicTeleopState(
         self.gripper_release_threshold = float(
             np.clip(gripper_release_threshold, 0.0, 1.0)
         )
+        self.gripper_enable_interval_s = float(gripper_enable_interval_s)
         self._left_bus = int(gripper_left_bus)
         self._right_bus = int(gripper_right_bus)
         self._gripper_can_id = int(gripper_can_id)
@@ -112,6 +116,7 @@ class SonicTeleopState(
 
         self._gripper_session_active = False
         self._gripper_armed = False
+        self._last_gripper_enable_time: Optional[float] = None
         self._left_trigger = 0.0
         self._right_trigger = 0.0
         self._left_trigger_at: Optional[float] = None
@@ -174,6 +179,7 @@ class SonicTeleopState(
             self.yaw_bias_rad,
             self.live_reference_timeout_s,
             self.source_blend_seconds,
+            self.gripper_enable_interval_s,
             self._gripper_kp,
             self._gripper_kd,
         )
@@ -239,6 +245,7 @@ class SonicTeleopState(
     def on_exit(self, ctx: RobotControlContext) -> None:
         self._gripper_session_active = False
         self._gripper_armed = False
+        self._last_gripper_enable_time = None
         self._stale_sides.clear()
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
@@ -285,6 +292,7 @@ class SonicTeleopState(
         self._left_trigger = self._right_trigger = 0.0
         self._left_trigger_at = self._right_trigger_at = None
         self._gripper_armed = False
+        self._last_gripper_enable_time = None
         self._gripper_session_active = True
         self._gripper_wait_reason = None
         self._stale_sides.clear()
@@ -310,16 +318,28 @@ class SonicTeleopState(
         ):
             self._log_gripper_wait("release", "SONIC夹爪等待左右trigger松开")
             return False
+        self._publish_gripper_enable(now)
+        self._gripper_armed = True
+        self._gripper_wait_reason = None
+        self.logger.info("SONIC夹爪已解锁")
+        return True
+
+    def _publish_gripper_enable(self, now: float) -> None:
         for bus in (self._left_bus, self._right_bus):
             self._gripper_publisher.publish(
                 BxiMotor.build_motor_packet(
                     bus, self._gripper_can_id, BxiMotor.enter_motor_mode()
                 )
             )
-        self._gripper_armed = True
-        self._gripper_wait_reason = None
-        self.logger.info("SONIC夹爪已解锁")
-        return True
+        self._last_gripper_enable_time = now
+
+    def _refresh_gripper_enable(self, now: float) -> None:
+        last_enable_time = self._last_gripper_enable_time
+        if (
+            last_enable_time is None
+            or now - last_enable_time >= self.gripper_enable_interval_s
+        ):
+            self._publish_gripper_enable(now)
 
     def _log_gripper_wait(self, reason: str, message: str) -> None:
         if self._gripper_wait_reason != reason:
@@ -366,6 +386,7 @@ class SonicTeleopState(
         self._stale_sides = stale
         if stale:
             return
+        self._refresh_gripper_enable(now)
         self._publish_gripper(self._left_bus, self._left_trigger)
         self._publish_gripper(self._right_bus, self._right_trigger)
 
