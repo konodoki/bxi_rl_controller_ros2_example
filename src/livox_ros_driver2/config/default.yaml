@@ -1,0 +1,16 @@
+# Common ROS 2 defaults. Copy this file for each robot and add stable serial
+# mappings before deployment.
+/livox_lidar_publisher:
+  ros__parameters:
+    multi_topic: 1
+    publish_freq: 10.0
+    auto_connect: true
+    device_timeout_sec: 3.0
+    topic_namespace: hardware
+    single_lidar_name: head_lidar
+    frame_id: livox_frame
+
+    # Explicit mappings always win over the one-device fallback and SN_<serial>.
+    # lidar_serial_mappings:
+    #   - "3GGDJ5C0012345=body_lidar"
+    #   - "3GGDJ5C0098765=head_lidar"
