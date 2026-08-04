@@ -27,7 +27,7 @@
     <numeric name="simulation.lidar.head_lidar.range" data="0.1 70"/>
 
     <!-- Official first-return point rate and typical frame rate. -->
-    <numeric name="simulation.lidar.head_lidar.rate" data="200000 10"/>
+    <numeric name="simulation.lidar.head_lidar.rate" data="20000 10"/>
 
     <!-- Official FOV: 360 degrees horizontal, -7 to 52 degrees vertical. -->
     <numeric name="simulation.lidar.head_lidar.fov"
