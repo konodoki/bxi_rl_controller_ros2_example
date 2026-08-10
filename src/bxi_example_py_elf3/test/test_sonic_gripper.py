@@ -89,6 +89,82 @@ def test_calibrator_fails_when_feedback_stream_goes_stale():
     assert "feedback timed out" in calibrator.failure_reason
 
 
+@pytest.mark.parametrize(
+    ("phase", "target", "position", "expected_phase"),
+    (
+        (
+            GRIPPER.CalibrationPhase.BACKING_OFF_OPEN,
+            1.9,
+            1.7,
+            GRIPPER.CalibrationPhase.SEEKING_CLOSED,
+        ),
+        (
+            GRIPPER.CalibrationPhase.BACKING_OFF_CLOSED,
+            -0.4,
+            -0.2,
+            GRIPPER.CalibrationPhase.RETURNING_OPEN,
+        ),
+    ),
+)
+def test_calibrator_accepts_safe_direction_backoff_overshoot(
+    phase,
+    target,
+    position,
+    expected_phase,
+):
+    calibrator = GRIPPER.GripperCalibrator("test", _settings())
+    calibrator.reset(0.0)
+    calibrator.phase = phase
+    calibrator.target_position = target
+    calibrator._phase_started_at = 0.0
+    feedback = GRIPPER.MotorFeedback(1, position, 0.0, 0.0, 30, 31, 0.05)
+
+    calibrator.update(feedback, 0.05, 0.02)
+
+    assert calibrator.phase is expected_phase
+
+
+@pytest.mark.parametrize(
+    ("phase", "target", "position"),
+    (
+        (GRIPPER.CalibrationPhase.BACKING_OFF_OPEN, 1.9, 2.0),
+        (GRIPPER.CalibrationPhase.BACKING_OFF_CLOSED, -0.4, -0.5),
+    ),
+)
+def test_calibrator_rejects_position_that_has_not_backed_off_far_enough(
+    phase,
+    target,
+    position,
+):
+    calibrator = GRIPPER.GripperCalibrator("test", _settings())
+    calibrator.reset(0.0)
+    calibrator.phase = phase
+    calibrator.target_position = target
+    calibrator._phase_started_at = 0.0
+    feedback = GRIPPER.MotorFeedback(1, position, 0.0, 0.0, 30, 31, 0.05)
+
+    calibrator.update(feedback, 0.05, 0.02)
+
+    assert calibrator.phase is phase
+    assert not calibrator.failed
+
+
+def test_calibrator_backoff_phase_times_out_instead_of_hanging_forever():
+    settings = _settings()
+    calibrator = GRIPPER.GripperCalibrator("left", settings)
+    calibrator.reset(0.0)
+    calibrator.phase = GRIPPER.CalibrationPhase.BACKING_OFF_CLOSED
+    calibrator.target_position = -0.4
+    calibrator._phase_started_at = 0.0
+    now = settings.phase_timeout_s + 0.01
+    feedback = GRIPPER.MotorFeedback(1, -0.6, 0.0, 0.0, 30, 31, now)
+
+    calibrator.update(feedback, now, 0.02)
+
+    assert calibrator.failed
+    assert "backoff phase timed out" in calibrator.failure_reason
+
+
 def test_calibrator_finds_both_limits_backs_off_and_returns_open():
     settings = _settings()
     calibrator = GRIPPER.GripperCalibrator("left", settings)
