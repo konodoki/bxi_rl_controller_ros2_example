@@ -1,7 +1,7 @@
 schema: 1
 id: com.bxi.sonic
 name: SONIC遥操
-version: 1.2.1
+version: 1.3.0
 api: ">=4,<5"
 enable: true
 entrypoint: plugin:create_mod
@@ -199,6 +199,11 @@ states:
       live_reference_timeout_s: 0.5
       idle_frame_start: 3509
       source_blend_seconds: 0.4
+      head_pitch_limit_rad: 0.5
+      head_yaw_limit_rad: 1.0
+      head_pitch_speed_rad_s: 1.5
+      head_yaw_speed_rad_s: 2.0
+      head_deadband_rad: 0.015
       hardware_gripper: true
       gripper_enable_interval_s: 1.0
       gripper_left_bus: 5

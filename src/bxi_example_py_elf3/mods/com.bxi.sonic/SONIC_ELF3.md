@@ -13,8 +13,9 @@ SONIC 已作为标准 Mod 接入主控制器，不再使用独立 supervisor、�
 com.bxi.sonic/sonic_teleop
 ```
 
-该状态执行同一套 29 关节 SONIC 策略，`hardware_gripper: true` 时同时接管左右夹爪；不再
-提供单独的 `sonic_teleop_gripper` 状态。进入和退出 SONIC 使用 `soft_switch`，策略切换仍由
+该状态执行同一套 29 关节 SONIC 策略，并在 PICO `POSE` 模式下追加两个具名头部
+关节命令；`hardware_gripper: true` 时同时接管左右夹爪。不再提供单独的
+`sonic_teleop_gripper` 状态。进入和退出 SONIC 使用 `soft_switch`，策略切换仍由
 框架的两阶段准备和控制线程内切换机制完成。
 
 控制数据路径为：
@@ -26,8 +27,34 @@ PICO 头显/追踪设备
   -> pico_manager（ZMQ pose）
   -> smpl_bridge（ZMQ smpl_ref）
   -> SonicTeleopPolicy
-  -> ELF3 MotorFrame
+  -> 29 关节策略命令 + head_y_joint/head_z_joint
+  -> ELF3 具名 MotorFrame
 ```
+
+PICO 头部控制与 `com.bxi.pico_gmr_motion` 使用同一套语义：
+
+```text
+relative_head = inverse(Spine3) * Head
+head_y_joint = -relative XYZ roll
+head_z_joint =  relative XYZ pitch
+```
+
+每次进入 `POSE` 都重置中心姿态。头部目标作为 `head_joint_pos[*,2]` 从 manager 经
+bridge 的十帧滑窗传给策略状态；断流、idle reference 或退出 `POSE` 后目标回零，
+状态按速度限制平滑回中。策略模型输出仍为 29 关节，状态才合成为 31 关节具名帧；
+29 关节机器人会按名称裁掉不存在的头部关节，31 关节机器人则完整接收。
+
+头部参数默认值与 PICO GMR 一致：
+
+| 参数 | 默认值 |
+| --- | ---: |
+| `head_pitch_limit_rad` | `0.5` |
+| `head_yaw_limit_rad` | `1.0` |
+| `head_pitch_speed_rad_s` | `1.5` |
+| `head_yaw_speed_rad_s` | `2.0` |
+| `head_deadband_rad` | `0.015` |
+
+头部 PD 增益为 `kp=16.747` / `kd=1.066`。
 
 进入状态后还会并行启动独立的头部相机图传路径：
 
