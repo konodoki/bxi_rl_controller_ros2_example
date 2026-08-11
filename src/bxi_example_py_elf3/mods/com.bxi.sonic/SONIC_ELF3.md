@@ -29,6 +29,15 @@ PICO 头显/追踪设备
   -> ELF3 MotorFrame
 ```
 
+进入状态后还会并行启动独立的头部相机图传路径：
+
+```text
+simulation/hardware head camera Image
+  -> head_camera_rtsp_node
+  -> MediaMTX
+  -> rtsp://<机器人IP>:2212/video
+```
+
 模型和固定参考数据随 Mod 安装：
 
 ```text
@@ -47,10 +56,15 @@ reference 和夹爪行为均由 Mod 资源与 `mod.yaml` 明确决定。
 
 ## 进程和生命周期边界
 
-`mod.yaml` 声明两个 state-scoped 节点：
+`mod.yaml` 声明四个 state-scoped 节点：
 
 ```text
 ModNodeManager
+├── mediamtx_server
+│   └── runtime: command / execution: process
+├── head_camera_rtsp
+│   ├── runtime: executable / execution: process
+│   └── depends_on: mediamtx_server
 ├── pico_manager
 │   ├── runtime: command / execution: process
 │   └── runtime_profile: pico_bootstrap
@@ -65,7 +79,7 @@ ModNodeManager
 - `pico_bootstrap` 不预注入 Mod 内的厂商路径；manager 会先检查用户安装，失败后才启用
   当前平台的内置回退。
 - `smpl_bridge` 是宿主 ROS executor 内的原生节点，不继承厂商 Python、SDK 或动态库环境。
-- 两个节点均为 `lifecycle: state`，只在准备或运行 `sonic_teleop` 时存在；离开状态后由
+- 四个节点均为 `lifecycle: state`，只在准备或运行 `sonic_teleop` 时存在；离开状态后由
   框架按依赖逆序回收。
 - manager 普通运行故障最多重启 3 次；依赖或解释器配置错误使用退出码 `78`，框架将其
   视为确定性 fault，不进行无意义重启。
@@ -85,8 +99,14 @@ assets/
 config/
 pico/
 runtime/
+  mediamtx.yml
+  linux-x86_64/mediamtx
+  linux-aarch64/mediamtx
   linux-x86_64/roboticsservice/
   linux-aarch64/roboticsservice/
+bin/
+  linux-x86_64/head_camera_rtsp_node
+  linux-aarch64/head_camera_rtsp_node
 vendor/
   python/
     linux-x86_64-cpython-310/
@@ -141,12 +161,13 @@ cd src/bxi_example_py_elf3/mods/com.bxi.sonic
 当前仓库已经包含 x86_64 和 ARM64 runtime，正常目标机不需要重复此步骤。该命令只适用于
 生成或更新尚不存在的平台目录，并要求 `ldd`、`readelf` 和 `patchelf`。
 
-SONIC 只保留两个部署环境变量：
+SONIC 只保留三个部署环境变量：
 
 | 变量 | 用途 |
 | --- | --- |
 | `SONIC_PICO_PYTHON` | 固定 manager 使用的 Python 解释器 |
 | `SONIC_XRT_SERVICE_DIR` | 显式指定用户 RoboticsService 根目录 |
+| `SONIC_MEDIAMTX_BIN` | 可选；覆盖 Mod 内置 MediaMTX 路径 |
 
 Service 查找顺序是：显式 `SONIC_XRT_SERVICE_DIR`、用户安装的
 `/opt/apps/roboticsservice`、当前平台内置 runtime。用户路径一旦存在便具有权威性；若其
