@@ -1,7 +1,7 @@
 schema: 1
 id: com.bxi.sonic
 name: SONIC遥操
-version: 1.2.0
+version: 1.2.1
 api: ">=4,<5"
 enable: true
 entrypoint: plugin:create_mod
