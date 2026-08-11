@@ -39,6 +39,9 @@ head_y_joint = -relative XYZ roll
 head_z_joint =  relative XYZ pitch
 ```
 
+`states.sonic_teleop.params.head_control_enabled` 默认为 `true`。关闭后状态的自然输出
+从 31 关节恢复为策略原生的 29 个身体关节，不再创建或更新 PICO 头部命令层。
+
 每次进入 `POSE` 都重置中心姿态。头部目标作为 `head_joint_pos[*,2]` 从 manager 经
 bridge 的十帧滑窗传给策略状态；断流、idle reference 或退出 `POSE` 后目标回零，
 状态按速度限制平滑回中。策略模型输出仍为 29 关节，状态才合成为 31 关节具名帧；
