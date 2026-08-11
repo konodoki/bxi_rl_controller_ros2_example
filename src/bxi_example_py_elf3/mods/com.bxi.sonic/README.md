@@ -57,6 +57,10 @@ SONIC 策略仍明确声明 ELF3 的 29 关节模型布局，状态再用具名�
 
 ## PICO 头部控制
 
+是否由 SONIC 状态控制头部由 `states.sonic_teleop.params.head_control_enabled`
+决定，默认为 `true`。设为 `false` 后 SONIC 仅输出策略的 29 个身体关节，不声明
+`head_y_joint/head_z_joint` 的命令所有权；头部由机器人平台默认命令或其他命令来源处理。
+
 头部映射与 `com.bxi.pico_gmr_motion` 保持一致：使用 `Spine3` 到 `Head` 的相对旋转，
 将相对 XYZ roll 取反后映射到 `head_y_joint`，将相对 XYZ pitch 映射到
 `head_z_joint`。每次切入 `POSE` 都以当前头显姿态为中心重新归零，因此不会把进入

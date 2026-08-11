@@ -106,6 +106,7 @@ class SonicTeleopState(
         live_reference_timeout_s: float = 0.5,
         idle_frame_start: int = 3509,
         source_blend_seconds: float = 0.4,
+        head_control_enabled: bool = True,
         head_pitch_limit_rad: float = 0.5,
         head_yaw_limit_rad: float = 1.0,
         head_pitch_speed_rad_s: float = 1.5,
@@ -145,6 +146,7 @@ class SonicTeleopState(
         self.live_reference_timeout_s = float(live_reference_timeout_s)
         self.idle_frame_start = int(idle_frame_start)
         self.source_blend_seconds = float(source_blend_seconds)
+        self.head_control_enabled = bool(head_control_enabled)
         self.head_pitch_limit_rad = float(head_pitch_limit_rad)
         self.head_yaw_limit_rad = float(head_yaw_limit_rad)
         self.head_pitch_speed_rad_s = float(head_pitch_speed_rad_s)
@@ -343,9 +345,20 @@ class SonicTeleopState(
             source_blend_duration_s=self.source_blend_seconds,
         )
         self.policy.reset(ctx.inference_frame)
+        self._prepare_command_source()
+        self._last_running_frame = None
+        self._gripper_session_active = False
+
+    def _prepare_command_source(self) -> None:
         self._head_command.position.fill(0.0)
         self._head_command.kp.fill(self.HEAD_KP)
         self._head_command.kd.fill(self.HEAD_KD)
+        if not self.head_control_enabled:
+            self._command_composer = JointCommandComposer(
+                ELF3_POLICY_JOINTS,
+                (JointCommandLayer("sonic_policy", self.policy.output.joints),),
+            )
+            return
         self._command_composer = JointCommandComposer(
             SONIC_OUTPUT_JOINTS,
             (
@@ -353,13 +366,13 @@ class SonicTeleopState(
                 JointCommandLayer("pico_head", self._head_command.view),
             ),
         )
-        self._last_running_frame = None
-        self._gripper_session_active = False
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         return self._compose_motor_frame()
 
     def _update_head_command(self, desired: object, dt: float) -> None:
+        if not self.head_control_enabled:
+            return
         target = np.asarray(desired, dtype=np.float32)
         if target.shape != (2,) or not np.isfinite(target).all():
             raise ValueError("SONIC head target must contain two finite joint angles")
@@ -405,7 +418,15 @@ class SonicTeleopState(
 
     def on_enter(self, ctx: RobotControlContext) -> None:
         mode = "SONIC遥操（夹爪）" if self.hardware_gripper else "SONIC遥操"
-        self.logger.info(f"{mode}已启动；PICO同时按住A+B+X+Y请求校准，再按A+X切入实时POSE")
+        head_status = (
+            "头部跟踪已开启"
+            if self.head_control_enabled
+            else "头部跟踪已关闭"
+        )
+        self.logger.info(
+            f"{mode}已启动；{head_status}；"
+            "PICO同时按住A+B+X+Y请求校准，再按A+X切入实时POSE"
+        )
         if self.hardware_gripper:
             self._left_trigger = self._right_trigger = 0.0
             now = time.monotonic()
