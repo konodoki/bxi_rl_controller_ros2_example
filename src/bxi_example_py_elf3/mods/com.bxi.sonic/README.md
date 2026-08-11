@@ -29,7 +29,7 @@ PICO 头显/追踪设备
   -> pico_manager（ZMQ pose）
   -> smpl_bridge（ZMQ smpl_ref）
   -> SonicTeleopPolicy
-  -> 29 个具名策略关节
+  -> 29 个具名策略关节 + 2 个具名头部关节
   -> MotorFrame
 ```
 
@@ -44,13 +44,28 @@ RKNN -> OpenVINO -> ONNX Runtime
 
 ## 状态和事件
 
-- `com.bxi.sonic/sonic_teleop`：控制机器人本体的 29 个策略关节；是否控制夹爪由
-  `hardware_gripper` 参数决定。
+- `com.bxi.sonic/sonic_teleop`：控制机器人本体的 29 个策略关节，并在进入 PICO
+  `POSE` 后控制 `head_y_joint/head_z_joint`；是否控制夹爪由 `hardware_gripper`
+  参数决定。
 - `com.bxi.sonic/activate`：默认 `btn_10=9`。
 - `com.bxi.sonic/reset_alignment`：默认 `btn_9=1`。
 
-SONIC 明确声明 ELF3 的 29 关节模型布局。框架按关节名映射到机器人布局；机器人额外
-关节由其他命令来源或显式 defaults 提供，不依赖数组位置猜测。
+SONIC 策略仍明确声明 ELF3 的 29 关节模型布局，状态再用具名命令合成器追加
+`head_y_joint/head_z_joint`。框架按关节名映射到机器人布局：31 关节机器人接收
+完整身体和头部命令，29 关节机器人会按名称忽略不存在的两个头部关节，不依赖数组
+位置猜测。
+
+## PICO 头部控制
+
+头部映射与 `com.bxi.pico_gmr_motion` 保持一致：使用 `Spine3` 到 `Head` 的相对旋转，
+将相对 XYZ roll 取反后映射到 `head_y_joint`，将相对 XYZ pitch 映射到
+`head_z_joint`。每次切入 `POSE` 都以当前头显姿态为中心重新归零，因此不会把进入
+模式前的绝对朝向瞬间施加给机器人。
+
+头部目标通过 `pose.head_joint_pos -> smpl_ref.head_joint_pos` 与身体参考同步传输。默认
+俯仰/偏航限位为 `0.5/1.0 rad`，速度限制为 `1.5/2.0 rad/s`，死区为
+`0.015 rad`，PD 增益为 `kp=16.747, kd=1.066`。离开 `POSE`、引用超时或回到
+idle reference 时，头部目标置零并按速度限制平滑回中。
 
 ## 框架生命周期
 

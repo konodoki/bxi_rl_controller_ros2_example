@@ -21,6 +21,7 @@ import zmq
 
 from gear_sonic.trl.utils.numpy_smpl import compute_from_body_poses
 from gear_sonic.utils.teleop.face_combo import FaceComboEdgeDetector
+from gear_sonic.utils.teleop.head_tracking import PicoHeadMapper
 from gear_sonic.utils.teleop.zmq.zmq_poller import ZMQPoller
 from service_runtime import resolve_service_root, service_library_paths
 
@@ -60,6 +61,8 @@ PICO_BODY_WAIT_LOG_SECONDS = 5.0
 PICO_BODY_SAMPLE_MAX_AGE_SECONDS = 0.5
 PICO_INPUT_ERROR_LOG_SECONDS = 5.0
 MANAGER_POLL_PERIOD_SECONDS = 0.01
+PICO_SPINE3_JOINT_INDEX = 9
+PICO_HEAD_JOINT_INDEX = 15
 
 
 def _startup_log(prefix: str, message: str):
@@ -1298,6 +1301,7 @@ class PoseStreamer:
         self.record_idx = 0
 
         self.left_hand_ik_solver, self.right_hand_ik_solver = init_hand_ik_solvers()
+        self.head_mapper = PicoHeadMapper()
         self.parent_indices = [
             -1,
             0,
@@ -1356,6 +1360,7 @@ class PoseStreamer:
         """Called when entering pose mode. Resets yaw only.
         Calibration is triggered separately by the operator (A+B+X+Y → calibrate_now)."""
         self.yaw_accumulator.reset()
+        self.head_mapper.reset()
         self.last_fps_report = time.time()
         self.fps_counter = 0
         self.fps_warning_active = False
@@ -1374,6 +1379,7 @@ class PoseStreamer:
         self.fps_counter = 0
         self.fps_warning_active = False
         self.last_fps_warning_log = None
+        self.head_mapper.reset()
 
     def run_once(self):
         """Execute one iteration of the pose streaming loop."""
@@ -1414,6 +1420,17 @@ class PoseStreamer:
         smpl_joints_np = latest_data["smpl_joints_local"][0]
         body_quat_np = latest_data["global_orient_quat"][0]
         curr_stamp_ns = int(sample.get("timestamp_ns", 0))
+        body_poses = np.asarray(sample["body_poses_np"])
+        spine_quaternion_wxyz = body_poses[
+            PICO_SPINE3_JOINT_INDEX, [6, 3, 4, 5]
+        ]
+        head_quaternion_wxyz = body_poses[
+            PICO_HEAD_JOINT_INDEX, [6, 3, 4, 5]
+        ]
+        head_joint_pos = self.head_mapper.update(
+            spine_quaternion_wxyz,
+            head_quaternion_wxyz,
+        )
         step_ns = int(1e9 / max(1, self.target_fps))
         if self.prev_stamp_ns is None:
             self.prev_stamp_ns = curr_stamp_ns
@@ -1519,6 +1536,7 @@ class PoseStreamer:
         self.frame_buffer["body_quat_w"].append(use_body_quat)
         self.frame_buffer["frame_index"].append(int(self.step))
         self.frame_buffer["joint_pos"].append(joint_pos)
+        self.frame_buffer["head_joint_pos"].append(head_joint_pos)
         pico_dt = float(sample.get("dt", 0.0))
         pico_fps = float(sample.get("fps", 0.0))
         N = len(self.frame_buffer["frame_index"])
@@ -1540,6 +1558,9 @@ class PoseStreamer:
                 "smpl_joints": np.stack((self.frame_buffer["smpl_joints"]), axis=0),
                 "body_quat_w": np.stack((self.frame_buffer["body_quat_w"]), axis=0),
                 "joint_pos": np.stack((self.frame_buffer["joint_pos"]), axis=0),
+                "head_joint_pos": np.stack(
+                    self.frame_buffer["head_joint_pos"], axis=0
+                ),
                 "joint_vel": np.zeros((N, 29)),
                 "vr_position": vr_3pt_pose[:, :3].flatten(),
                 "vr_orientation": vr_3pt_pose[:, 3:].flatten(),
