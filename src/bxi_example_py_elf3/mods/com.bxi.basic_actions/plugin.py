@@ -46,6 +46,9 @@ LIE_DOWN_POLICY = ResourceKey[DanceMotionPolicyGravityIsaaclabV2](
 RECOVER_POLICY = ResourceKey[DanceMotionPolicyMjlab](
     "com.bxi.basic_actions/recover_policy"
 )
+RECOVER_FACE_POLICY = ResourceKey[DanceMotionPolicyGravityIsaaclabV3](
+    "com.bxi.basic_actions/recover_face_policy"
+)
 APPLAUSE_CLIP = ResourceKey[PlaybackClip]("com.bxi.basic_actions/applause_clip")
 
 
@@ -106,6 +109,16 @@ def _load_recover_policy(context: ResourceLoadContext) -> DanceMotionPolicyMjlab
     )
 
 
+def _load_recover_face_policy(
+    context: ResourceLoadContext,
+) -> DanceMotionPolicyGravityIsaaclabV3:
+    return DanceMotionPolicyGravityIsaaclabV3(
+        str(context.asset("assets/getup_face.npz")),
+        str(context.asset("assets/getup_face.onnx")),
+        start_frame=0,
+    )
+
+
 def _load_applause_clip(context: ResourceLoadContext) -> PlaybackClip:
     return load_clip(
         context.asset("assets/applause.pkl"),
@@ -128,6 +141,11 @@ def create_mod(context: ModLoadContext) -> ModDefinition:
         LIE_DOWN_POLICY, _load_lie_down_policy, policy="on_demand"
     )
     context.register_resource(RECOVER_POLICY, _load_recover_policy, policy="on_demand")
+    context.register_resource(
+        RECOVER_FACE_POLICY,
+        _load_recover_face_policy,
+        policy="on_demand",
+    )
     context.register_resource(APPLAUSE_CLIP, _load_applause_clip, policy="on_demand")
 
     normal_policy = context.resource(NORMAL_POLICY)
@@ -137,6 +155,7 @@ def create_mod(context: ModLoadContext) -> ModDefinition:
     dance_policy = context.resource(DANCE_POLICY)
     lie_down_policy = context.resource(LIE_DOWN_POLICY)
     recover_policy = context.resource(RECOVER_POLICY)
+    recover_face_policy = context.resource(RECOVER_FACE_POLICY)
     applause_clip = context.resource(APPLAUSE_CLIP)
 
     return ModDefinition(
@@ -160,7 +179,10 @@ def create_mod(context: ModLoadContext) -> ModDefinition:
                 start_frame=state.int_param("start_frame", 100),
             ),
             "recover": lambda state: RecoverState(
-                state.name, state.state_id, recover_policy
+                state.name,
+                state.state_id,
+                recover_policy,
+                recover_face_policy,
             ),
             "amp_run": lambda state: AmpRunState(
                 state.name, state.state_id, amp_run_policy
