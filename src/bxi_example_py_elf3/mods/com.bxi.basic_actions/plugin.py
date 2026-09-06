@@ -43,7 +43,7 @@ DANCE_POLICY = ResourceKey[DanceMotionPolicyGravityIsaaclabV3](
 LIE_DOWN_POLICY = ResourceKey[DanceMotionPolicyGravityIsaaclabV2](
     "com.bxi.basic_actions/lie_down_policy"
 )
-RECOVER_POLICY = ResourceKey[DanceMotionPolicyMjlab](
+RECOVER_POLICY = ResourceKey[DanceMotionPolicyGravityIsaaclabV3](
     "com.bxi.basic_actions/recover_policy"
 )
 RECOVER_FACE_POLICY = ResourceKey[DanceMotionPolicyGravityIsaaclabV3](
@@ -101,11 +101,13 @@ def _load_lie_down_policy(
     )
 
 
-def _load_recover_policy(context: ResourceLoadContext) -> DanceMotionPolicyMjlab:
-    return DanceMotionPolicyMjlab(
-        str(context.asset("assets/recover.npz")),
-        str(context.asset("assets/recover.onnx")),
-        start_frame=600,
+def _load_recover_policy(
+    context: ResourceLoadContext,
+) -> DanceMotionPolicyGravityIsaaclabV3:
+    return DanceMotionPolicyGravityIsaaclabV3(
+        str(context.asset("assets/getup_back.npz")),
+        str(context.asset("assets/getup_back.onnx")),
+        start_frame=0,
     )
 
 
