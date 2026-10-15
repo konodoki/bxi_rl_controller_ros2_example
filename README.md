@@ -66,13 +66,16 @@ USD 或 XML 格式请参考：[unofficial models](https://github.com/MelodyAI/Ti
 sudo install -m 0755 ./script/bxi-battle-dragon-link /usr/local/bin/bxi-battle-dragon-link
 ```
 
-4. 复制 udev 规则，并重新加载规则：
+4. 安装 IMU、BAT 和遥控器三份 udev 规则，并重新加载。若已安装旧版 `/etc/udev/rules.d/bxi-dev.rules`，请先备份并移出该目录，避免与新规则同时生效：
 
 ```bash
-sudo cp ./script/bxi-dev.rules /etc/udev/rules.d/
+sudo install -m 0644 ./script/udev/70-bxi-*.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules
-sudo udevadm trigger
+sudo udevadm trigger --subsystem-match=tty --action=add
+sudo udevadm trigger --subsystem-match=input --action=add
 ```
+
+规则按 `uname -m` 区分 `x86_64` 与 `aarch64`，分别使用 `3-8`/`3-9` 与 `4-1.7`/`5-1`。IMU 和 BAT 在各自架构的两个端口都可匹配，设备类型由 USB VID/PID 区分。
 
 重新插拔 Battle Dragon 手柄后，应能看到 `/dev/input/jsBattleDragon`。如果只是本地调试，也可以临时将 `src/remote_controller/config/xbox_default.yaml` 中的 `sources.gamepad.device` 改成当前系统对应的 `/dev/input/js0`。
 
@@ -83,6 +86,36 @@ sudo cp ./script/ros_elf_launch.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now ros_elf_launch.service
 sudo systemctl status ros_elf_launch.service
+```
+
+部署相关文件的用途见 [`script/README.md`](script/README.md)。
+
+### RK3588 / RKNN 发布包
+
+ARM64 CI 默认生成包含 RKNN 的 `*_arm64.tar.gz` 和 SHA256 校验文件。
+该 ARM64 包用于 **RK3588、Ubuntu 22.04、ROS 2 Humble、Python 3.10**，包含同一提交的
+ARM64 编译产物、全部内置策略的非量化 RKNN 模型及 `.rknn.build.json` 契约、
+RKNN Lite 2.3.2 wheel 和 `librknnrt.so`。原始 ONNX 保留用于回退和轨迹输出。
+
+包解压到 `/opt/bxi/` 后，在目标板执行以下依赖安装命令。板端需已有 ROS 2 Humble、
+`bxi_ros2_pkg` 的 ARM64 版本及兼容的 RKNPU 内核驱动；此包不包含内核驱动。
+
+> 安装会更新 Python 依赖并替换 `/usr/lib/librknnrt.so`，请先停止使用这些依赖的控制程序。
+> 基础 Python 依赖仍需联网安装；`--check` 只检查导入和动态库加载，不代表 NPU 推理通过。
+
+```bash
+sudo -H /opt/bxi/bxi_rl_controller_ros2_example/deploy_environment.sh
+/opt/bxi/bxi_rl_controller_ros2_example/deploy_environment.sh --check
+```
+
+运行时会优先尝试同名 RKNN，失败时回退 ONNX；确认日志中的 `selected_backend=rknn`。
+CI 的 ARM64 runner 负责转换、契约验证和打包，板端推理精度与实机动作仍需单独验收。
+
+在已安装 `rknn-toolkit2==2.3.2` 的 Python 3.10 环境中，可独立运行或复查转换：
+
+```bash
+python tools/build_rknn_release.py
+python tools/build_rknn_release.py --check
 ```
 
 ### 在仿真器中运行示例控制程序
@@ -101,7 +134,7 @@ git clone https://github.com/bxirobotics/bxi_ros2_pkg.git
 source /opt/bxi/bxi_ros2_pkg/setup.bash
 ```
 
-2. 在 `bxi_rl_controller_ros2_example` 目录中运行 `bash build.sh`，编译 `./src` 目录下的所有源码。编译完成后运行 `source ./install/setup.bash` 激活当前包环境。
+2. 在 `bxi_rl_controller_ros2_example` 目录中运行 `bash build.sh`，编译 `./src` 目录下的所有源码。若当前系统是 RK3588/aarch64，脚本会先检查每个 ONNX 的 RKNN 和构建契约；缺失时自动检查或安装匹配的 `rknn-toolkit2==2.3.2`，再生成 RKNN。编译完成后运行 `source ./install/setup.bash` 激活当前包环境。
 3. 运行全身控制策略：
 
 ```bash
@@ -133,7 +166,7 @@ git clone https://github.com/bxirobotics/bxi_ros2_pkg.git
 source /opt/bxi/bxi_ros2_pkg/setup.bash
 ```
 
-2. 在 `bxi_rl_controller_ros2_example` 目录中运行 `bash build.sh`，编译 `./src` 目录下的所有源码。编译完成后运行 `source ./install/setup.bash` 激活当前包环境。
+2. 在 `bxi_rl_controller_ros2_example` 目录中运行 `bash build.sh`，编译 `./src` 目录下的所有源码。若当前系统是 RK3588/aarch64，脚本会先检查每个 ONNX 的 RKNN 和构建契约；缺失时自动检查或安装匹配的 `rknn-toolkit2==2.3.2`，再生成 RKNN。编译完成后运行 `source ./install/setup.bash` 激活当前包环境。
 3. 运行全身控制策略：
 
 ```bash
