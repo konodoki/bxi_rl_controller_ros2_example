@@ -9,7 +9,14 @@ from geometry_msgs.msg import Twist
 from rclpy.qos import QoSProfile
 
 from bxi_example_py_elf3.policies import HumanoidGaitPolicyLiteIsaaclab
-from bxi_example_py_elf3.framework.mod_api import ResourceHandle
+from bxi_example_py_elf3.framework.mod_api import (
+    JointCommandComposer,
+    JointCommandLayer,
+    JointLayout,
+    JointTargetBuffer,
+    JointTargetView,
+    ResourceHandle,
+)
 from bxi_example_py_elf3.framework.mod_api import RobotControlState
 from bxi_example_py_elf3.framework.mod_api import StateBehavior
 from bxi_example_py_elf3.framework.mod_api.transition import (
@@ -23,6 +30,16 @@ if TYPE_CHECKING:
 
 
 class NormalState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
+    # Semantic names, not model-output or robot-message numeric offsets.
+    _ARM_JOINTS = JointLayout(
+        (
+            "l_shoulder_y_joint", "l_shoulder_x_joint", "l_shoulder_z_joint",
+            "l_elbow_y_joint", "l_wrist_x_joint", "l_wrist_y_joint", "l_wrist_z_joint",
+            "r_shoulder_y_joint", "r_shoulder_x_joint", "r_shoulder_z_joint",
+            "r_elbow_y_joint", "r_wrist_x_joint", "r_wrist_y_joint", "r_wrist_z_joint",
+        ),
+        label="normal fixed-PD arms",
+    )
     _CMD_VEL_TOPIC = "/cmd_vel"
     _CMD_VEL_MINIMUM = np.asarray((-1.0, -0.5, -1.5), dtype=np.float32)
     _CMD_VEL_MAXIMUM = np.asarray((1.0, 0.5, 1.5), dtype=np.float32)
@@ -35,6 +52,9 @@ class NormalState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
     ) -> None:
         super().__init__(name, state_id, resources=(policy,))
         self._policy = policy
+        self._arm_command = JointTargetBuffer(self._ARM_JOINTS)
+        self._composer: JointCommandComposer | None = None
+        self._pd_target: JointTargetView | None = None
         self._navigation_control = False
         self._navigation_command = np.zeros(3, dtype=np.float32)
         self._navigation_command_lock = Lock()
@@ -94,13 +114,52 @@ class NormalState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
         ctx: RobotControlContext,
         from_state: StateBehavior[RobotControlContext],
     ) -> None:
-        ctx.preheat_model(
-            self._policy.get(), command=self.get_cmd_vel(ctx)
-        )
+        policy = self._policy.get()
+        ctx.preheat_model(policy, command=self.get_cmd_vel(ctx))
+        # Rebuild mappings and snapshot current PD defaults before transition.
+        self._composer = None
+        self._frame_from_policy(policy.output.joints, policy.default_target)
+
+    def _frame_from_policy(
+        self, target: JointTargetView, pd_target: JointTargetView
+    ) -> MotorFrame:
+        composer = self._composer
+        if (
+            composer is None
+            or composer.layers[0].target is not target
+            or self._pd_target is not pd_target
+        ):
+            indices = np.fromiter(
+                (pd_target.layout.index(name) for name in self._ARM_JOINTS.names),
+                dtype=np.intp,
+                count=self._ARM_JOINTS.dof_num,
+            )
+            # pd_brake uses this same default_target, not the live policy output.
+            for source, destination in (
+                (pd_target.position, self._arm_command.position),
+                (pd_target.kp, self._arm_command.kp),
+                (pd_target.kd, self._arm_command.kd),
+            ):
+                np.take(source, indices, out=destination)
+            composer = JointCommandComposer(
+                target.layout,
+                (
+                    JointCommandLayer("policy", target),
+                    JointCommandLayer(
+                        "arms_pd", self._arm_command.view, override=True
+                    ),
+                ),
+            )
+            self._composer = composer
+            self._pd_target = pd_target
+        frame = composer.compose()
+        frame.vel.fill(0.0)
+        frame.torque.fill(0.0)
+        return frame
 
     def get_entry_frame(self, ctx: RobotControlContext) -> MotorFrame:
         policy = self._policy.get()
-        return self._motor_frame_from_target(ctx, policy.output.joints)
+        return self._frame_from_policy(policy.output.joints, policy.default_target)
 
     def sample_running_frame(
         self, ctx: RobotControlContext, dt: float, *, advance: bool
@@ -112,7 +171,7 @@ class NormalState(RobotControlState, EntryFrameProvider, RunningFrameProvider):
             dt,
             advance=advance,
         )
-        return self._motor_frame_from_target(ctx, output.joints)
+        return self._frame_from_policy(output.joints, policy.default_target)
 
     def on_update(self, ctx: RobotControlContext, dt: float) -> None:
         if ctx.is_orientation_unsafe(ctx.current_quat_xyzw):

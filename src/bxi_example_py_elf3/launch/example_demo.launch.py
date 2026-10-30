@@ -5,7 +5,7 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
 
-    xml_file_name = "data/mujoco_simulation/elf3.xml"
+    xml_file_name = "data/mujoco_simulation/elf4.xml"
     xml_file = os.path.join(get_package_share_path("bxi_example_py_elf3"), xml_file_name)
     state_machine_config = os.path.join(
         get_package_share_path("bxi_example_py_elf3"),
@@ -32,6 +32,8 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     {"/topic_prefix": "simulation/"},
+                    # Stay in the configured initial state with the base fixed.
+                    {"/simulation_auto_start": False},
                     {"/state_machine_config": state_machine_config},
                 ],
                 emulate_tty=True,

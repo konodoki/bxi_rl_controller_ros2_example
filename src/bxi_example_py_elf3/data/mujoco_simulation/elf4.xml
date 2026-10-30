@@ -1,0 +1,247 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="elf3">
+  <compiler angle="radian" meshdir="meshes" />
+  <asset>
+    <mesh name="torso_link" file="torso_link.STL" />
+    <mesh name="r_hip_y_link" file="r_hip_y_link.STL" />
+    <mesh name="r_hip_z_link" file="r_hip_z_link.STL" />
+    <mesh name="r_ankle_y_link" file="r_ankle_y_link.STL" />
+    <mesh name="r_ankle_x_link" file="r_ankle_x_link.STL" />
+    <mesh name="l_hip_y_link" file="l_hip_y_link.STL" />
+    <mesh name="l_hip_z_link" file="l_hip_z_link.STL" />
+    <mesh name="l_ankle_y_link" file="l_ankle_y_link.STL" />
+    <mesh name="l_ankle_x_link" file="l_ankle_x_link.STL" />
+    <mesh name="r_shoulder_z_link" file="r_shoulder_z_link.STL" />
+    <mesh name="r_wrist_x_link" file="r_wrist_x_link.STL" />
+    <mesh name="r_wrist_y_link" file="r_wrist_y_link.STL" />
+    <mesh name="l_shoulder_z_link" file="l_shoulder_z_link.STL" />
+    <mesh name="l_wrist_x_link" file="l_wrist_x_link.STL" />
+    <mesh name="l_wrist_y_link" file="l_wrist_y_link.STL" />
+    <mesh name="waist_z_link" file="waist_z_link.STL" />
+    <mesh name="l_elbow_y_link" file="l_elbow_y_link.STL" />
+    <mesh name="waist_y_link" file="waist_y_link.STL" />
+    <mesh name="l_shoulder_x_link" file="l_shoulder_x_link.STL" />
+    <mesh name="r_wrist_z_link" file="r_wrist_z_link.STL" />
+    <mesh name="r_elbow_y_link" file="r_elbow_y_link.STL" />
+    <mesh name="l_knee_y_link" file="l_knee_y_link.STL" />
+    <mesh name="r_shoulder_x_link" file="r_shoulder_x_link.STL" />
+    <mesh name="r_hip_x_link" file="r_hip_x_link.STL" />
+    <mesh name="l_shoulder_y_link" file="l_shoulder_y_link.STL" />
+    <mesh name="r_shoulder_y_link" file="r_shoulder_y_link.STL" />
+    <mesh name="l_wrist_z_link" file="l_wrist_z_link.STL" />
+    <mesh name="l_hip_x_link" file="l_hip_x_link.STL" />
+    <mesh name="r_knee_y_link" file="r_knee_y_link.STL" />
+    <mesh name="waist_x_link" file="waist_x_link.STL" />
+  </asset>
+  <worldbody>
+    <!-- At z=1.35 the zero-pose feet penetrated the floor by about 19 mm. -->
+    <body name="torso_link" pos="0 0 1.40">
+      <freejoint name="torso_joint" />
+      <!-- ROS simulation IMU contract: torso-local frame, wxyz quaternion. -->
+      <site name="imu_in_torso" pos="0 0 0" size="0.01" />
+      <inertial pos="-0.0098619036 -5.2012917E-05 -0.055383617" mass="14.997482" fullinertia="0.2500899 0.21325306 0.11330283 -0.00014719724 0.0083707968 0.0002636975" />
+      <body name="waist_y_link" pos="0 0 -0.29237">
+        <inertial pos="6.80893e-07 0 -0.00013" quat="0 0.707107 0 0.707107" mass="0.0662244" diaginertia="2.8045e-05 1.84832e-05 1.10636e-05" />
+        <joint name="waist_y_joint" pos="0 0 0" axis="0 1 0" range="-0.5236 0.5236" actuatorfrcrange="-150 150" armature="0.02" />
+        <body name="waist_x_link">
+          <inertial pos="-0.00930362 3.19228e-09 -0.0150086" quat="0 0.776234 0 0.630445" mass="0.24345" diaginertia="0.000294363 0.000217775 0.000146483" />
+          <joint name="waist_x_joint" pos="0 0 0" axis="1 0 0" range="-0.2618 0.2618" actuatorfrcrange="-150 150" armature="0.02" />
+          <body name="waist_z_link">
+            <inertial pos="-0.00027631 -0.000166007 -0.150161" quat="0.999597 0.0268583 -0.00479276 -0.00781881" mass="7.3869" diaginertia="0.0505385 0.0358229 0.0340049" />
+            <joint name="waist_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" actuatorfrcrange="-150 150" armature="0.02" />
+            <body name="r_hip_y_link" pos="0 -0.12981 -0.197858" quat="0.991828 0.127584 0 0">
+              <inertial pos="-0.0231741 -0.0118748 -0.0538931" quat="0.952087 -0.27442 0.117374 -0.0666942" mass="1.8069" diaginertia="0.00390816 0.00348548 0.0020196" />
+              <joint name="r_hip_y_joint" pos="0 0 0" axis="0 1 0" range="-2.8798 2.8798" actuatorfrcrange="-320 320" armature="0.02" />
+              <body name="r_hip_x_link" pos="0 -0.0162175 -0.0619939" quat="0.991828 -0.127584 0 0">
+                <inertial pos="0.0157966 0.000177108 -0.0305476" quat="0.997703 0.0029627 0.067681 0.00020089" mass="0.310081" diaginertia="0.000515395 0.000473393 0.00014681" />
+                <joint name="r_hip_x_joint" pos="0 0 0" axis="1 0 0" range="-2.3315 0.48869" actuatorfrcrange="-150 150" armature="0.02" />
+                <body name="r_hip_z_link">
+                  <inertial pos="0.000919047 0.0106215 -0.281228" quat="0.705658 0.0204732 -0.0199305 0.707976" mass="3.99786" diaginertia="0.0547614 0.0526516 0.00608679" />
+                  <joint name="r_hip_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" actuatorfrcrange="-48 48" armature="0.02" />
+                  <body name="r_knee_y_link" pos="0 0 -0.36">
+                    <inertial pos="0.00406177 -0.00145774 -0.165338" quat="0.448764 0.028293 -0.0259731 0.892825" mass="2.26972" diaginertia="0.0250554 0.0248231 0.0017668" />
+                    <joint name="r_knee_y_joint" pos="0 0 0" axis="0 1 0" range="-0.087266 2.618" actuatorfrcrange="-320 320" armature="0.02" />
+                    <body name="r_ankle_y_link" pos="0 0 -0.42">
+                      <inertial pos="6.80661e-07 0.0051344 -0.00104418" quat="0.498513 0.501483 -0.501483 0.498513" mass="0.0126876" diaginertia="1.54709e-06 1.31011e-06 5.89212e-07" />
+                      <joint name="r_ankle_y_joint" pos="0 0 0" axis="0 1 0" range="-0.87266 0.7854" actuatorfrcrange="-35 35" armature="0.02" />
+                      <body name="r_ankle_x_link">
+                        <inertial pos="0.0114356 0.00527317 -0.0243556" quat="-0.00216571 0.727503 -0.00204656 0.686099" mass="0.417715" diaginertia="0.00143598 0.00134404 0.00020375" />
+                        <joint name="r_ankle_x_joint" pos="0 0 0" axis="1 0 0" range="-0.34907 0.34907" actuatorfrcrange="-35 35" armature="0.02" />
+                        <geom name="r_ankle_x_link_visual" type="mesh" mesh="r_ankle_x_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+                        <geom name="r_ankle_x_link_collision" type="box" contype="1" conaffinity="2" group="3" rgba="0.3 0.7 0.3 0.2" friction="1.0 0.03 0.003" pos="0.03 0 -0.011" size="0.12 0.044 0.024" />
+                      </body>
+                      <geom name="r_ankle_y_link_visual" type="mesh" mesh="r_ankle_y_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+                    </body>
+                    <geom name="r_knee_y_link_visual" type="mesh" mesh="r_knee_y_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+                    <geom name="r_knee_y_link_collision" type="capsule" contype="1" conaffinity="2" group="3" rgba="0.3 0.7 0.3 0.2" friction="0.8 0.02 0.002" size="0.04" fromto="0 0 -0.04 0 0 -0.36" />
+                  </body>
+                  <geom name="r_hip_z_link_visual" type="mesh" mesh="r_hip_z_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+                  <geom name="r_hip_z_link_collision" type="capsule" contype="1" conaffinity="2" group="3" rgba="0.3 0.7 0.3 0.2" friction="0.8 0.02 0.002" size="0.055" fromto="0 0 -0.05 0 0 -0.33" />
+                </body>
+                <geom name="r_hip_x_link_visual" type="mesh" mesh="r_hip_x_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+              </body>
+              <geom name="r_hip_y_link_visual" type="mesh" mesh="r_hip_y_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+            </body>
+            <body name="l_hip_y_link" pos="0 0.12981 -0.197858" quat="0.991828 -0.127584 0 0">
+              <inertial pos="-0.0231741 0.00992823 -0.0550016" quat="0.958139 0.254271 0.123386 0.0457357" mass="1.8069" diaginertia="0.00390119 0.00348586 0.00201634" />
+              <joint name="l_hip_y_joint" pos="0 0 0" axis="0 1 0" range="-2.8798 2.8798" actuatorfrcrange="-320 320" armature="0.02" />
+              <body name="l_hip_x_link" pos="0 0.0162175 -0.0619939" quat="0.991828 0.127584 0 0">
+                <inertial pos="0.0157966 0.000173146 -0.0305476" quat="0.997703 0.0029627 0.067681 0.00020089" mass="0.310081" diaginertia="0.000515395 0.000473393 0.00014681" />
+                <joint name="l_hip_x_joint" pos="0 0 0" axis="1 0 0" range="-0.48869 2.3315" actuatorfrcrange="-150 150" armature="0.02" />
+                <body name="l_hip_z_link">
+                  <inertial pos="0.000919047 -0.00686394 -0.280738" quat="0.708964 -0.0174798 0.0186414 0.704782" mass="3.99786" diaginertia="0.0544103 0.0523014 0.00608746" />
+                  <joint name="l_hip_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" actuatorfrcrange="-48 48" armature="0.02" />
+                  <body name="l_knee_y_link" pos="0 0 -0.36">
+                    <inertial pos="0.00406177 0.00748797 -0.165766" quat="0.896932 -0.0206458 0.0249485 0.440981" mass="2.26972" diaginertia="0.0251041 0.0248652 0.00177465" />
+                    <joint name="l_knee_y_joint" pos="0 0 0" axis="0 1 0" range="-0.087266 2.618" actuatorfrcrange="-320 320" armature="0.02" />
+                    <body name="l_ankle_y_link" pos="0 0 -0.42">
+                      <inertial pos="6.80661e-07 0.00413046 -0.00105012" quat="0.498513 0.501483 -0.501483 0.498513" mass="0.0126876" diaginertia="1.54709e-06 1.31011e-06 5.89212e-07" />
+                      <joint name="l_ankle_y_joint" pos="0 0 0" axis="0 1 0" range="-0.87266 0.7854" actuatorfrcrange="-35 35" armature="0.02" />
+                      <body name="l_ankle_x_link">
+                        <inertial pos="0.0114356 0.00426923 -0.0243615" quat="-0.00216571 0.727503 -0.00204656 0.686099" mass="0.417715" diaginertia="0.00143598 0.00134404 0.00020375" />
+                        <joint name="l_ankle_x_joint" pos="0 0 0" axis="1 0 0" range="-0.34907 0.34907" actuatorfrcrange="-35 35" armature="0.02" />
+                        <geom name="l_ankle_x_link_visual" type="mesh" mesh="l_ankle_x_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+                        <geom name="l_ankle_x_link_collision" type="box" contype="1" conaffinity="2" group="3" rgba="0.3 0.7 0.3 0.2" friction="1.0 0.03 0.003" pos="0.03 0 -0.011" size="0.12 0.044 0.024" />
+                      </body>
+                      <geom name="l_ankle_y_link_visual" type="mesh" mesh="l_ankle_y_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+                    </body>
+                    <geom name="l_knee_y_link_visual" type="mesh" mesh="l_knee_y_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+                    <geom name="l_knee_y_link_collision" type="capsule" contype="1" conaffinity="2" group="3" rgba="0.3 0.7 0.3 0.2" friction="0.8 0.02 0.002" size="0.04" fromto="0 0 -0.04 0 0 -0.36" />
+                  </body>
+                  <geom name="l_hip_z_link_visual" type="mesh" mesh="l_hip_z_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+                  <geom name="l_hip_z_link_collision" type="capsule" contype="1" conaffinity="2" group="3" rgba="0.3 0.7 0.3 0.2" friction="0.8 0.02 0.002" size="0.055" fromto="0 0 -0.05 0 0 -0.33" />
+                </body>
+                <geom name="l_hip_x_link_visual" type="mesh" mesh="l_hip_x_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+              </body>
+              <geom name="l_hip_y_link_visual" type="mesh" mesh="l_hip_y_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+            </body>
+            <geom name="waist_z_link_visual" type="mesh" mesh="waist_z_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+            <geom name="waist_z_link_collision" type="box" contype="1" conaffinity="2" group="3" rgba="0.3 0.7 0.3 0.2" friction="0.8 0.02 0.002" pos="0 0 -0.15" size="0.075 0.105 0.12" />
+          </body>
+          <geom name="waist_x_link_visual" type="mesh" mesh="waist_x_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+        </body>
+        <geom name="waist_y_link_visual" type="mesh" mesh="waist_y_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+      </body>
+      <body name="r_shoulder_y_link" pos="0 -0.18935 0.0556">
+        <inertial pos="-0.0126544 0.00336514 -0.00107594" quat="0.745765 0.662905 -0.0574378 -0.0330486" mass="1.28459" diaginertia="0.00157418 0.0013621 0.00119118" />
+        <joint name="r_shoulder_y_joint" pos="0 0 0" axis="0 1 0" range="-2.8798 2.8798" actuatorfrcrange="-78 78" armature="0.02" />
+        <body name="r_shoulder_x_link">
+          <inertial pos="0.0170177 -1.11581e-06 -0.0239338" quat="0.990854 0 0.134937 0" mass="0.226155" diaginertia="0.000296368 0.000252378 0.00011202" />
+          <joint name="r_shoulder_x_joint" pos="0 0 0" axis="1 0 0" range="-3.0543 0.34907" actuatorfrcrange="-78 78" armature="0.02" />
+          <body name="r_shoulder_z_link">
+            <inertial pos="-0.00108495 0.00322224 -0.17319" quat="0.689932 0.016032 -0.0135331 0.72357" mass="2.04897" diaginertia="0.0156644 0.0153605 0.00175066" />
+            <joint name="r_shoulder_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" actuatorfrcrange="-50 50" armature="0.02" />
+            <body name="r_elbow_y_link" pos="0 0 -0.26">
+              <inertial pos="0.0279406 -0.01762 -0.00112283" quat="0.411295 0.411295 0.575184 0.575184" mass="0.185315" diaginertia="0.000220673 0.000194935 7.99161e-05" />
+              <joint name="r_elbow_y_joint" pos="0 0 0" axis="0 1 0" range="-0.95993 1.6581" actuatorfrcrange="-50 50" armature="0.02" />
+              <body name="r_wrist_x_link" pos="0.26 0 0">
+                <inertial pos="-0.122659 0.00219782 -0.00118758" quat="-0.0138105 0.706937 0.0141685 0.706999" mass="1.19377" diaginertia="0.00465159 0.00432059 0.00094304" />
+                <joint name="r_wrist_x_joint" pos="0 0 0" axis="1 0 0" range="-2.8798 2.8798" actuatorfrcrange="-30 30" armature="0.02" />
+                <body name="r_wrist_y_link">
+                  <inertial pos="-2.43323e-05 0.000214909 0.00045286" quat="0.99991 -0.00497403 -0.00367003 0.0119404" mass="0.417788" diaginertia="0.000236186 0.000227384 0.000195987" />
+                  <joint name="r_wrist_y_joint" pos="0 0 0" axis="0 1 0" range="-1.309 1.309" actuatorfrcrange="-16 16" armature="0.02" />
+                  <body name="r_wrist_z_link">
+                    <inertial pos="0.0360701 -1.10777e-06 0.00861972" quat="0 0.910428 0 0.413668" mass="0.112865" diaginertia="0.000126127 0.000117962 4.93763e-05" />
+                    <joint name="r_wrist_z_joint" pos="0 0 0" axis="0 0 1" range="-0.7854 0.7854" actuatorfrcrange="-16 16" armature="0.02" />
+                    <geom name="r_wrist_z_link_visual" type="mesh" mesh="r_wrist_z_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+                  </body>
+                  <geom name="r_wrist_y_link_visual" type="mesh" mesh="r_wrist_y_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+                </body>
+                <geom name="r_wrist_x_link_visual" type="mesh" mesh="r_wrist_x_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+              </body>
+              <geom name="r_elbow_y_link_visual" type="mesh" mesh="r_elbow_y_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+              <geom name="r_elbow_y_link_collision" type="capsule" contype="1" conaffinity="2" group="3" rgba="0.3 0.7 0.3 0.2" friction="0.8 0.02 0.002" size="0.032" fromto="0 0 0 0.22 0 0" />
+            </body>
+            <geom name="r_shoulder_z_link_visual" type="mesh" mesh="r_shoulder_z_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+            <geom name="r_shoulder_z_link_collision" type="capsule" contype="1" conaffinity="2" group="3" rgba="0.3 0.7 0.3 0.2" friction="0.8 0.02 0.002" size="0.045" fromto="0 0 -0.02 0 0 -0.22" />
+          </body>
+          <geom name="r_shoulder_x_link_visual" type="mesh" mesh="r_shoulder_x_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+        </body>
+        <geom name="r_shoulder_y_link_visual" type="mesh" mesh="r_shoulder_y_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+      </body>
+      <body name="l_shoulder_y_link" pos="0 0.18935 0.0556">
+        <inertial pos="-0.0126544 -0.00302232 -0.00113639" quat="0.684954 0.724168 0.0441174 0.0668793" mass="1.28459" diaginertia="0.00158016 0.00135938 0.00119356" />
+        <joint name="l_shoulder_y_joint" pos="0 0 0" axis="0 1 0" range="-2.8798 2.8798" actuatorfrcrange="-78 78" armature="0.02" />
+        <body name="l_shoulder_x_link">
+          <inertial pos="0.0170177 1.09872e-06 -0.0239338" quat="0.990854 0 0.134937 0" mass="0.226155" diaginertia="0.000296368 0.000252378 0.00011202" />
+          <joint name="l_shoulder_x_joint" pos="0 0 0" axis="1 0 0" range="-0.34907 3.0543" actuatorfrcrange="-78 78" armature="0.02" />
+          <body name="l_shoulder_z_link">
+            <inertial pos="-0.00115096 -0.00313305 -0.173147" quat="0.721601 -0.0131987 0.0169259 0.691976" mass="2.04897" diaginertia="0.0156473 0.0153504 0.00174891" />
+            <joint name="l_shoulder_z_joint" pos="0 0 0" axis="0 0 1" range="-2.8798 2.8798" actuatorfrcrange="-50 50" armature="0.02" />
+            <body name="l_elbow_y_link" pos="0 0 -0.26">
+              <inertial pos="0.0279406 0.01762 -0.00112286" quat="0.575184 0.575184 0.411295 0.411295" mass="0.185315" diaginertia="0.000220673 0.000194935 7.99161e-05" />
+              <joint name="l_elbow_y_joint" pos="0 0 0" axis="0 1 0" range="-0.95993 1.6581" actuatorfrcrange="-50 50" armature="0.02" />
+              <body name="l_wrist_x_link" pos="0.26 0 0">
+                <inertial pos="-0.122658 -0.00219782 -0.00106042" quat="0.014258 0.707012 -0.013717 0.706925" mass="1.19377" diaginertia="0.0046517 0.00432062 0.000942967" />
+                <joint name="l_wrist_x_joint" pos="0 0 0" axis="1 0 0" range="-2.8798 2.8798" actuatorfrcrange="-30 30" armature="0.02" />
+                <body name="l_wrist_y_link">
+                  <inertial pos="2.07438e-07 -0.000225065 0.000452857" quat="0.999971 0.00319263 -0.00691976 0.000872588" mass="0.417788" diaginertia="0.000236413 0.000227159 0.000195982" />
+                  <joint name="l_wrist_y_joint" pos="0 0 0" axis="0 1 0" range="-1.309 1.309" actuatorfrcrange="-16 16" armature="0.02" />
+                  <body name="l_wrist_z_link">
+                    <inertial pos="0.0360701 1.10968e-06 0.00861972" quat="0 0.910428 0 0.413668" mass="0.112865" diaginertia="0.000126127 0.000117962 4.93763e-05" />
+                    <joint name="l_wrist_z_joint" pos="0 0 0" axis="0 0 1" range="-0.7854 0.7854" actuatorfrcrange="-16 16" armature="0.02" />
+                    <geom name="l_wrist_z_link_visual" type="mesh" mesh="l_wrist_z_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+                  </body>
+                  <geom name="l_wrist_y_link_visual" type="mesh" mesh="l_wrist_y_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+                </body>
+                <geom name="l_wrist_x_link_visual" type="mesh" mesh="l_wrist_x_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+              </body>
+              <geom name="l_elbow_y_link_visual" type="mesh" mesh="l_elbow_y_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+              <geom name="l_elbow_y_link_collision" type="capsule" contype="1" conaffinity="2" group="3" rgba="0.3 0.7 0.3 0.2" friction="0.8 0.02 0.002" size="0.032" fromto="0 0 0 0.22 0 0" />
+            </body>
+            <geom name="l_shoulder_z_link_visual" type="mesh" mesh="l_shoulder_z_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+            <geom name="l_shoulder_z_link_collision" type="capsule" contype="1" conaffinity="2" group="3" rgba="0.3 0.7 0.3 0.2" friction="0.8 0.02 0.002" size="0.045" fromto="0 0 -0.02 0 0 -0.22" />
+          </body>
+          <geom name="l_shoulder_x_link_visual" type="mesh" mesh="l_shoulder_x_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+        </body>
+        <geom name="l_shoulder_y_link_visual" type="mesh" mesh="l_shoulder_y_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+      </body>
+      <geom name="torso_link_visual" type="mesh" mesh="torso_link" group="1" rgba=".72 .79 .88 1" contype="0" conaffinity="0" />
+      <geom name="torso_link_collision" type="box" contype="1" conaffinity="2" group="3" rgba="0.3 0.7 0.3 0.2" friction="0.8 0.02 0.002" pos="0 0 -0.10" size="0.11 0.12 0.18" />
+    </body>
+    <geom name="floor" type="plane" size="0 0 1" contype="2" conaffinity="1" rgba=".55 .57 .6 1" friction="0.9 0.02 0.002" />
+    <light name="preview_light" pos="2 -3 5" dir="-0.3 0.3 -1" diffuse="1 1 1" ambient=".6 .6 .6" />
+  </worldbody>
+  <!-- The installed ROS bridge reads qpos[id+7]/qvel[id+6]. -->
+  <!-- Motor order MUST match scalar joint traversal, not policy order. -->
+  <actuator>
+    <motor name="waist_y_joint" joint="waist_y_joint" gear="1" ctrllimited="true" ctrlrange="-150 150" />
+    <motor name="waist_x_joint" joint="waist_x_joint" gear="1" ctrllimited="true" ctrlrange="-150 150" />
+    <motor name="waist_z_joint" joint="waist_z_joint" gear="1" ctrllimited="true" ctrlrange="-150 150" />
+    <motor name="r_hip_y_joint" joint="r_hip_y_joint" gear="1" ctrllimited="true" ctrlrange="-320 320" />
+    <motor name="r_hip_x_joint" joint="r_hip_x_joint" gear="1" ctrllimited="true" ctrlrange="-150 150" />
+    <motor name="r_hip_z_joint" joint="r_hip_z_joint" gear="1" ctrllimited="true" ctrlrange="-48 48" />
+    <motor name="r_knee_y_joint" joint="r_knee_y_joint" gear="1" ctrllimited="true" ctrlrange="-320 320" />
+    <motor name="r_ankle_y_joint" joint="r_ankle_y_joint" gear="1" ctrllimited="true" ctrlrange="-35 35" />
+    <motor name="r_ankle_x_joint" joint="r_ankle_x_joint" gear="1" ctrllimited="true" ctrlrange="-35 35" />
+    <motor name="l_hip_y_joint" joint="l_hip_y_joint" gear="1" ctrllimited="true" ctrlrange="-320 320" />
+    <motor name="l_hip_x_joint" joint="l_hip_x_joint" gear="1" ctrllimited="true" ctrlrange="-150 150" />
+    <motor name="l_hip_z_joint" joint="l_hip_z_joint" gear="1" ctrllimited="true" ctrlrange="-48 48" />
+    <motor name="l_knee_y_joint" joint="l_knee_y_joint" gear="1" ctrllimited="true" ctrlrange="-320 320" />
+    <motor name="l_ankle_y_joint" joint="l_ankle_y_joint" gear="1" ctrllimited="true" ctrlrange="-35 35" />
+    <motor name="l_ankle_x_joint" joint="l_ankle_x_joint" gear="1" ctrllimited="true" ctrlrange="-35 35" />
+    <motor name="r_shoulder_y_joint" joint="r_shoulder_y_joint" gear="1" ctrllimited="true" ctrlrange="-78 78" />
+    <motor name="r_shoulder_x_joint" joint="r_shoulder_x_joint" gear="1" ctrllimited="true" ctrlrange="-78 78" />
+    <motor name="r_shoulder_z_joint" joint="r_shoulder_z_joint" gear="1" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="r_elbow_y_joint" joint="r_elbow_y_joint" gear="1" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="r_wrist_x_joint" joint="r_wrist_x_joint" gear="1" ctrllimited="true" ctrlrange="-30 30" />
+    <motor name="r_wrist_y_joint" joint="r_wrist_y_joint" gear="1" ctrllimited="true" ctrlrange="-16 16" />
+    <motor name="r_wrist_z_joint" joint="r_wrist_z_joint" gear="1" ctrllimited="true" ctrlrange="-16 16" />
+    <motor name="l_shoulder_y_joint" joint="l_shoulder_y_joint" gear="1" ctrllimited="true" ctrlrange="-78 78" />
+    <motor name="l_shoulder_x_joint" joint="l_shoulder_x_joint" gear="1" ctrllimited="true" ctrlrange="-78 78" />
+    <motor name="l_shoulder_z_joint" joint="l_shoulder_z_joint" gear="1" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="l_elbow_y_joint" joint="l_elbow_y_joint" gear="1" ctrllimited="true" ctrlrange="-50 50" />
+    <motor name="l_wrist_x_joint" joint="l_wrist_x_joint" gear="1" ctrllimited="true" ctrlrange="-30 30" />
+    <motor name="l_wrist_y_joint" joint="l_wrist_y_joint" gear="1" ctrllimited="true" ctrlrange="-16 16" />
+    <motor name="l_wrist_z_joint" joint="l_wrist_z_joint" gear="1" ctrllimited="true" ctrlrange="-16 16" />
+  </actuator>
+  <sensor>
+    <gyro name="torso_ang_vel" site="imu_in_torso" />
+    <framequat name="torso_quat" objtype="site" objname="imu_in_torso" />
+    <velocimeter name="torso_lin_vel" site="imu_in_torso" />
+    <accelerometer name="torso_lin_acc" site="imu_in_torso" />
+  </sensor>
+  <visual>
+    <global offwidth="960" offheight="720" />
+  </visual>
+</mujoco>
