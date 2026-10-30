@@ -86,6 +86,22 @@ ELF3_RESET_JOINTS = JointLayout(
     label="ELF3 simulation reset",
 )
 
+
+def _elf3_feedback_groups(lower: JointLayout, upper: JointLayout):
+    """Fixed configured groups, never inferred from the first incoming frame.
+
+    ELF3's arm driver emits left/right independently. Non-arm configured upper
+    joints (e.g. head) remain a separate group; none are silently discarded.
+    """
+    left = tuple(n for n in upper.names if n.startswith("l_"))
+    right = tuple(n for n in upper.names if n.startswith("r_"))
+    other = tuple(n for n in upper.names if n not in left and n not in right)
+    return (lower,) + tuple(JointLayout(names, label=label) for names, label in (
+        (left, "left arm feedback"), (right, "right arm feedback"),
+        (other, "other upper feedback"),
+    ) if names)
+
+
 dof_num = ELF3_RESET_JOINTS.dof_num
 joint_name = ELF3_RESET_JOINTS.names
 
@@ -145,7 +161,7 @@ class BxiExample(Node):
         self.pending_remote_events = deque()
         self._joint_source = (
             SynchronizedJointStateSource(
-                self._joint_sync_lower, self._joint_sync_upper,
+                *self._joint_sync_groups,
                 policy=self.joint_sync_policy,
                 slop_sec=self.joint_sync_slop_sec,
                 queue_size=self.joint_sync_queue_size,
@@ -156,7 +172,7 @@ class BxiExample(Node):
         if self.joint_state_sync:
             self.get_logger().info(
                 "joint feedback synchronizer: "
-                f"groups={self._joint_sync_lower.dof_num}+{self._joint_sync_upper.dof_num}, "
+                f"groups={'+'.join(str(g.dof_num) for g in self._joint_sync_groups)}, "
                 f"policy={self.joint_sync_policy}, "
                 f"approximate_slop={self.joint_sync_slop_sec:.3f}s, queue={self.joint_sync_queue_size}, "
                 f"timeout={self.joint_sync_timeout_sec:.3f}s, "
@@ -165,7 +181,7 @@ class BxiExample(Node):
         if self.joint_state_sync and self.joint_sync_policy == "queue":
             self.get_logger().warning(
                 "joint sync uses FIFO arrival order, NOT timestamp synchronization; "
-                "lower/upper samples may represent different device times"
+                "joint groups may represent different device times"
             )
         self._joint_received = False
         self._next_bad_joint_state_warning = 0.0
@@ -278,6 +294,10 @@ class BxiExample(Node):
         self._joint_sync_upper = JointLayout.create(
             self.get_parameter("/joint_sync_upper_names").value, label="upper body feedback")
 
+        self._joint_sync_groups = _elf3_feedback_groups(
+            self._joint_sync_lower, self._joint_sync_upper,
+        )
+
         self.motor_override_topic = self.topic_prefix + "actuators_cmds_override"
         self.motor_override_timeout_sec = 0.2
         self.motor_override_release_blend_sec = 0.2
@@ -336,7 +356,7 @@ class BxiExample(Node):
             callback_group=self.io_callback_group,
         )
         joint_qos = QoSProfile(
-            depth=2 * self.joint_sync_queue_size if self.joint_state_sync else 1,
+            depth=len(self._joint_sync_groups) * self.joint_sync_queue_size if self.joint_state_sync else 1,
             durability=qos.durability, reliability=qos.reliability,
         )
         self.actuator_sub = self.create_subscription(
@@ -428,7 +448,7 @@ class BxiExample(Node):
                 if now >= self._next_joint_startup_info:
                     self._next_joint_startup_info = now + 2.0
                     self.get_logger().info(
-                        "waiting for synchronized lower/upper joint feedback before control startup: "
+                        "waiting for synchronized joint-group feedback before control startup: "
                         f"{diagnostic}"
                     )
                 return False
@@ -695,9 +715,9 @@ class BxiExample(Node):
                 return
 
             if latest is None:
-                return  # Valid half-frame queued, but no synchronized pair yet.
+                return  # Valid partial frame queued, but not all groups synchronized yet.
             if not self._joint_received:
-                origin = "synchronized lower/upper feedback" if self.joint_state_sync else "message names"
+                origin = "synchronized joint-group feedback" if self.joint_state_sync else "message names"
                 self.get_logger().info(
                     f"ELF3 state layout initialized from {origin}: {latest.layout.dof_num} joints"
                 )

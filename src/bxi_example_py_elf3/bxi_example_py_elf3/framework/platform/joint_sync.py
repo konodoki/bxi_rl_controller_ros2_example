@@ -18,16 +18,17 @@ from .synchronization import (
 
 
 class SynchronizedJointStateSource:
-    """Demultiplex two complete named groups and atomically emit paired states.
+    """Demultiplex caller-configured named groups into synchronized states.
 
     Each sample is consumed at most once. The default policy pairs nearby
     timestamps; exact/time and explicit arrival-order queue policies are also
     available. No interpolation or reuse of the other group's latest value.
     The caller serializes update/read using its input lock.
+    Groups are supplied by the application, without robot-specific inference.
     Layout, output buffer and per-group queue storage are fixed at construction.
     """
 
-    def __init__(self, lower: JointLayout, upper: JointLayout, *,
+    def __init__(self, *groups: JointLayout,
                  slop_sec: float = 0.02, queue_size: int = 8,
                  timeout_sec: float = 1.0, use_header_stamp: bool = True,
                  policy: str = "approximate",
@@ -45,11 +46,11 @@ class SynchronizedJointStateSource:
         options = {"timeout_sec": timeout_sec}
         if policy == "approximate":
             options["slop_sec"] = slop_sec
-        self._synchronizer = policies[policy](2, queue_size, **options)
+        self.groups = groups
+        self._synchronizer = policies[policy](len(groups), queue_size, **options)
         self.policy = policy
-        self.groups = (lower, upper)
-        self.layout = JointLayout(lower.names + upper.names, label="synchronized robot")
-        self._sets = (frozenset(lower.names), frozenset(upper.names))
+        self.layout = JointLayout(tuple(n for g in groups for n in g.names), label="synchronized robot")
+        self._sets = tuple(frozenset(g.names) for g in groups)
         self._all_names = frozenset(self.layout.names)
         self._buffer = JointStateBuffer(self.layout, dtype=dtype)
         self.timeout_sec = timeout_sec
@@ -57,7 +58,7 @@ class SynchronizedJointStateSource:
         self.use_header_stamp = use_header_stamp
         self._positions = tuple(np.empty((queue_size, g.dof_num), dtype=dtype) for g in self.groups)
         self._velocities = tuple(np.empty_like(p) for p in self._positions)
-        self._next = [0, 0]
+        self._next = [0] * len(groups)
         self._last_received: float | None = None
         self._mappings: OrderedDict[tuple[str, ...], tuple[int, CompiledJointMap]] = OrderedDict()
         self._full_frames = self._full_dropped = 0
@@ -69,7 +70,7 @@ class SynchronizedJointStateSource:
     @property
     def view(self) -> JointStateView:
         if not self.ready:
-            raise RuntimeError("joint synchronizer is waiting for a complete pair")
+            raise RuntimeError("joint synchronizer is waiting for a complete synchronized group set")
         return self._buffer.view
 
     def is_fresh(self, now: float | None = None) -> bool:
@@ -81,6 +82,7 @@ class SynchronizedJointStateSource:
         info = self._synchronizer.diagnostics()
         return {"policy": self.policy, "received": info["received"],
                 "pending": info["pending"],
+                "groups": tuple(g.label for g in self.groups),
                 "pairs": info["matches"], "full_frames": self._full_frames,
                 "dropped": info["dropped"] + self._full_dropped,
                 "last_pair_age_sec": None if not self.ready else now - self._last_received,
@@ -103,15 +105,15 @@ class SynchronizedJointStateSource:
         joint_set = frozenset(key)
         if joint_set == self._all_names:
             group, target = -1, self.layout
-        elif joint_set == self._sets[0]:
-            group, target = 0, self.groups[0]
-        elif joint_set == self._sets[1]:
-            group, target = 1, self.groups[1]
         else:
-            raise ValueError(
-                "joint feedback must contain one complete configured group or the full layout; "
-                f"received={key}"
-            )
+            try:
+                group = self._sets.index(joint_set)
+            except ValueError:
+                raise ValueError(
+                    "joint feedback must contain one complete configured group or the full layout; "
+                    f"received={key}"
+                ) from None
+            target = self.groups[group]
         result = group, CompiledJointMap.compile(incoming, target, require_exact=True)
         self._mappings[key] = result
         if len(self._mappings) > 16:

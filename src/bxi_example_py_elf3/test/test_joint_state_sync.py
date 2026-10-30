@@ -33,7 +33,7 @@ def test_complete_pair_only_reordered_groups_and_stable_output(first):
     src = source()
     assert update(src, first, 1_000_000_000, reverse=True) is None
     assert not src.ready
-    with pytest.raises(RuntimeError, match="complete pair"):
+    with pytest.raises(RuntimeError, match="complete synchronized group set"):
         _ = src.view
     frame = update(src, 1 - first, 1_010_000_000, now=1.01, reverse=True)
     assert frame.layout.names == LOWER.names + UPPER.names
@@ -131,23 +131,9 @@ def demo():
         return importlib.import_module("bxi_example_py_elf3.bxi_example_demo")
 
 
-@pytest.mark.parametrize("head", [False, True])
-def test_real_15_plus_14_or_16_names_and_full_frame_compatibility(demo, head):
-    all_names = demo.ELF3_RESET_JOINTS.names
-    lower = JointLayout(all_names[:15])
-    upper = JointLayout(all_names[15:] if head else all_names[15:29])
-    src = SynchronizedJointStateSource(lower, upper)
-    assert update(src, 0, 1_000_000_000) is None
-    frame = update(src, 1, 1_010_000_000, now=1.01)
-    assert frame.layout.dof_num == (31 if head else 29)
-    names = frame.layout.names[::-1]
-    expected = np.arange(len(names), dtype=float)
-    full = src.update(names, expected, expected * 2, timestamp_ns=2_000_000_000, received_at=2)
-    assert full is frame
-    np.testing.assert_array_equal(full.position, expected[::-1])
-    assert src.diagnostics(2)["pending"] == (0, 0)
-    with pytest.raises(ValueError):
-        SynchronizedJointStateSource(lower, lower)
+def test_configured_groups_must_not_overlap():
+    with pytest.raises(ValueError, match="duplicate names"):
+        SynchronizedJointStateSource(LOWER, LOWER)
 
 
 def platform(demo):
@@ -310,3 +296,128 @@ def test_fifo_joint_source_uses_queue_head_not_nearest_timestamp():
     np.testing.assert_array_equal(frame.position, [1, 2, 3, 3, 4])
     frame = update(src, 1, 999, value=4)
     np.testing.assert_array_equal(frame.position, [2, 3, 4, 4, 5])
+
+
+# Actual arm message names from the real-hardware startup log.
+LEFT_ARM = JointLayout(tuple("l_" + n for n in (
+    "shoulder_y_joint", "shoulder_x_joint", "shoulder_z_joint", "elbow_y_joint",
+    "wrist_x_joint", "wrist_y_joint", "wrist_z_joint")), label="left arm")
+RIGHT_ARM = JointLayout(tuple("r_" + n[2:] for n in LEFT_ARM.names), label="right arm")
+
+
+def hardware_source(demo, **kwargs):
+    lower = JointLayout(demo.ELF3_RESET_JOINTS.names[:15], label="lower")
+    upper = JointLayout(LEFT_ARM.names + RIGHT_ARM.names, label="upper")
+    groups = demo._elf3_feedback_groups(lower, upper)
+    assert tuple(g.dof_num for g in groups) == (15, 7, 7)
+    return SynchronizedJointStateSource(*groups, **kwargs)
+
+
+@pytest.mark.parametrize("policy", ["approximate", "exact", "time", "queue"])
+@pytest.mark.parametrize("order", [(0, 1, 2), (0, 2, 1), (1, 0, 2),
+                                  (1, 2, 0), (2, 0, 1), (2, 1, 0)])
+def test_real_15_7_7_names_any_arrival_order_and_policy(demo, policy, order):
+    src = hardware_source(demo, policy=policy)
+    buffers = tuple(id(a) for a in src._positions + src._velocities)
+    for index, group in enumerate(order):
+        frame = update(src, group, 1_000_000_000, value=10 * group, reverse=True)
+        if index < 2:
+            assert frame is None and not src.ready
+    assert frame.layout.dof_num == 29
+    np.testing.assert_array_equal(frame.position, np.r_[np.arange(15),
+                                                       np.arange(7) + 10,
+                                                       np.arange(7) + 20])
+    assert src.diagnostics(1)["received"] == (1, 1, 1)
+    assert src.diagnostics(1)["pairs"] == 1
+    assert tuple(id(a) for a in src._positions + src._velocities) == buffers
+
+
+@pytest.mark.parametrize("policy", ["approximate", "exact", "time", "queue"])
+def test_combined_14_joint_frame_is_not_a_configured_group(demo, policy):
+    src = hardware_source(demo, policy=policy)
+    update(src, 0, 100)
+    old_diag = src.diagnostics(1)
+    with pytest.raises(ValueError, match="one complete configured group"):
+        src.update(LEFT_ARM.names + RIGHT_ARM.names, [0] * 14, [0] * 14,
+                   timestamp_ns=100, received_at=1)
+    assert src.diagnostics(1) == old_diag
+    assert not src.ready
+
+
+@pytest.mark.parametrize("with_head", [False, True])
+@pytest.mark.parametrize("policy", ["approximate", "exact", "time", "queue"])
+def test_complete_simulation_29_or_31_frame_bypasses_multi_group_wait(demo, with_head, policy):
+    names = demo.ELF3_RESET_JOINTS.names if with_head else demo.ELF3_RESET_JOINTS.names[:29]
+    groups = demo._elf3_feedback_groups(JointLayout(names[:15]), JointLayout(names[15:]))
+    src = SynchronizedJointStateSource(*groups, policy=policy)
+    update(src, 1, 100)
+    frame = src.update(names[::-1], np.arange(len(names)), np.zeros(len(names)),
+                       timestamp_ns=200, received_at=1)
+    assert frame.layout.names == names
+    np.testing.assert_array_equal(frame.position, np.arange(len(names))[::-1])
+    assert src.is_fresh(1) and src.diagnostics(1)["full_frames"] == 1
+    assert src.diagnostics(1)["pending"] == (0,) * len(groups)
+    assert update(src, 2, 100) is None  # Watermark blocks old split feedback.
+
+
+def test_right_arm_cannot_stay_fresh_from_other_groups(demo):
+    src = hardware_source(demo, timeout_sec=.2)
+    for group in range(3):
+        update(src, group, 1_000_000_000)
+    saved = src.view.position.copy()
+    for i in range(1, 10):
+        now = 1 + i * .03
+        for group in (0, 1):
+            assert update(src, group, int(now * 1e9), now=now) is None
+    assert not src.is_fresh(now)
+    np.testing.assert_array_equal(src.view.position, saved)
+    with pytest.raises(RuntimeError, match="synchronization timeout"):
+        src.require_fresh(now)
+
+
+def test_callback_startup_gate_waits_for_both_separate_arms(demo):
+    node = platform(demo)
+    node._joint_source = hardware_source(demo)
+    with patch("bxi_example_py_elf3.bxi_example_demo.time.monotonic", return_value=1):
+        for group in (0, 1):
+            names = node._joint_source.groups[group].names
+            node.update(names, [1] * len(names), [0] * len(names), timestamp_ns=1_000_000_000)
+            assert not node._joint_received and not node.start(1)
+            node.robot_reset.assert_not_called()
+        node.update(RIGHT_ARM.names, [1] * 7, [0] * 7, timestamp_ns=1_000_000_000)
+        assert node._joint_received
+        assert not node.start(1)
+    node.robot_reset.assert_called_once_with(1, False)
+    node.get_logger().error.assert_not_called()
+
+
+def test_configured_head_names_not_silently_dropped(demo):
+    upper = JointLayout(LEFT_ARM.names + RIGHT_ARM.names + ("head_z_joint", "head_y_joint"))
+    groups = demo._elf3_feedback_groups(LOWER, upper)
+    assert tuple(g.dof_num for g in groups) == (3, 7, 7, 2)
+    assert groups[-1].names == ("head_z_joint", "head_y_joint")
+
+
+def test_generic_source_uses_only_caller_groups_not_robot_prefixes():
+    groups = tuple(JointLayout(names) for names in (
+        ("alpha", "beta"), ("gamma",), ("delta", "epsilon"), ("zeta",),
+    ))
+    src = SynchronizedJointStateSource(*groups)
+    assert update(src, 0, 100, value=1, reverse=True) is None
+    assert update(src, 1, 100, value=3) is None
+    assert update(src, 2, 100, value=4, reverse=True) is None
+    frame = update(src, 3, 100, value=6)
+    np.testing.assert_array_equal(frame.position, [1, 2, 3, 4, 5, 6])
+    assert src.diagnostics(1)["received"] == (1, 1, 1, 1)
+    # A complete group plus a fragment of another must be rejected atomically.
+    old_diag = src.diagnostics(1)
+    with pytest.raises(ValueError, match="complete configured group"):
+        src.update(("alpha", "beta", "delta"), [1] * 3, [0] * 3,
+                   timestamp_ns=200, received_at=1)
+    assert src.diagnostics(1) == old_diag
+
+
+@pytest.mark.parametrize("groups", [(), (LOWER,)])
+def test_generic_source_needs_at_least_two_caller_groups(groups):
+    with pytest.raises(ValueError, match="stream_count"):
+        SynchronizedJointStateSource(*groups)
