@@ -207,6 +207,67 @@ ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py \
 
 IMU 停机告警与接收断档排查见 [有序停机与 IMU 接收诊断](src/remote_controller/README.md#有序停机与-imu-接收诊断)。App/API 和遥控器应共用有序停机入口，不能先撤销 IMU 再停止控制器。
 
+### 同话题上下半身反馈同步
+
+分体硬件的下半身与上半身节点都发布 `hardware/actuator_states` 时，真机示例 launch 默认启用 `/joint_state_sync`。仍只建立一个订阅：按消息 `name` 的集合分流为腰腿 15 关节和双臂 14 关节，再进行双队列近似时间配对，输出稳定的完整 29 关节状态。不会把第一条腰腿反馈误认为全身布局，不拼入未测量的零值，不反复复用旧的另一半反馈。消息内关节可乱序；具名映射有界缓存、队列数值缓冲预分配，配对后才在输入锁下原子更新完整状态。同步器属于公共平台 I/O，不放入某个业务 Mod。
+
+同步策略已抽成公共 `framework/platform/synchronization.py`，支持任意 N 路输入（至少两路），不依赖 ROS 消息或节点。实现参考本机 ROS Humble `message_filters` 的时间戳匹配、有界队列、消费配对帧的思路，不新增 `message_filters` 依赖、订阅或线程，也不做插值或等待阻塞。关节订阅 DDS 队列深度为两侧缓存大小之和，其他传感器 QoS 保持原样。
+
+| 节点参数 / 同名 launch 参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| `joint_state_sync` | 节点 `false`，真机 launch `true` | 分体驱动启用；仿真和关闭时保留原来的完整帧接收方式 |
+| `joint_sync_policy` | `approximate` | `approximate`、`exact`、`time`、`queue`，见下表 |
+| `joint_sync_slop_sec` | `0.02` | 仅 approximate 生效，时间戳跨度最多 20 ms（包含边界） |
+| `joint_sync_queue_size` | `8` | 每侧最多保留 8 帧，可设置 1–64 |
+| `joint_sync_timeout_sec` | `1.0` | 按单调接收时间检查配对中较旧一侧的新鲜度，并清理过期缓存；approximate 模式必须大于 slop |
+| `joint_sync_use_header_stamp` | `true` | 默认使用非零 `header.stamp`，要求两个发布节点使用可比较的时钟 |
+
+#### 同步策略
+
+| `joint_sync_policy` | 公共类 | 匹配语义 |
+| --- | --- | --- |
+| `approximate` | `ApproximateTimeSynchronizer` | N 路全部时间戳的最大值与最小值之差 ≤ slop；两路使用最近邻，N 路扫描有界窗口，不枚举指数级组合 |
+| `exact` | `ExactTimeSynchronizer` | N 路时间戳必须精确到纳秒相等 |
+| `time` | `TimeSynchronizer` | 与 exact 相同；遵循 ROS `TimeSynchronizer` 的精确时间匹配含义 |
+| `queue` | `QueueSynchronizer` | 每路按到达顺序各取最旧一帧，不保证时间戳接近；仍限制缓存数量和单调接收年龄 |
+
+**`TimeSynchronizer` 不是不看时间戳的 FIFO 配对器。** FIFO 特意另命名为 `QueueSynchronizer`，避免把“凑齐各队列”误当成设备采样同步。队列模式不会因时间戳重复或倒序而拒收新到达的帧；时间模式会丢弃重复时间戳及早于已消费水位的帧。exact/time 关节同步必须启用有效 header 时间戳；两个独立 `now()` 的发布节点未必能精确相等，分体硬件默认保持 approximate。FIFO 只能在明确接受较弱同步保证时手动启用。
+
+公共组件可以从 `bxi_example_py_elf3.framework.platform` 导入；这是本框架的轻量 API，不是 ROS `Subscriber/registerCallback` 的直接替代。调用方须串行调用 `add`，它不自带锁或回调线程。示例：
+
+```python
+from bxi_example_py_elf3.framework.platform import ExactTimeSynchronizer
+
+sync = ExactTimeSynchronizer(stream_count=2, queue_size=8, timeout_sec=1.0)
+sync.add(0, 1_000_000_000, "lower", received_at=1.0)
+result = sync.add(1, 1_000_000_000, "upper", received_at=1.001)
+if result.samples is not None:
+    lower, upper = (sample.value for sample in result.samples)
+```
+
+`result.accepted` 区分“合法入队但暂未匹配”与“重复/过时而被拒收”；每个匹配返回按流编号排列的 `SynchronizedSample(timestamp_ns, received_at, value)`。组件按引用保存 payload，调用方不能提前修改未消费的 payload；关节适配器通过固定数值槽位和 `key` 机制复用缓冲。`clear()` 可显式清空缓存并重置时间水位，`clear(watermark_ns=...)` 则用于接收完整单帧后推进水位；时间戳不会自动猜测复位。诊断包括策略、接收数、队列深度、匹配数和丢弃数。
+
+例：
+
+```bash
+# 默认近似时间同步，调节容差
+ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py joint_sync_slop_sec:=0.03
+# 仅适用于两个发布节点具有相同采样时间戳的情况
+ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py joint_sync_policy:=exact
+# TimeSynchronizer 是同样的精确语义
+ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py joint_sync_policy:=time
+# 显式选择弱保证的 FIFO；这里只按接收顺序配对
+ros2 launch bxi_example_py_elf3 example_demo_hw.launch.py joint_sync_policy:=queue joint_sync_use_header_stamp:=false
+```
+
+approximate 模式下无有效时间戳的旧驱动必须显式设置 `joint_sync_use_header_stamp:=false`，此时只按本机单调接收时间配对，**不代表设备采样同步**。不能用扩大 slop 掩盖两个节点时钟不一致或长时间传输阻塞。时间同步模式下，重复或倒退到已消费帧之前的时间戳会丢弃；发布时钟复位后需要检查驱动并重启控制器。
+
+`/joint_sync_lower_names` 和 `/joint_sync_upper_names` 是可通过自定义 launch/节点参数覆盖的两组完整名字，不能重叠；开启头部时应把头部反馈按实际发布分组加入相应列表，以构成 31 关节布局。默认与当前真机 launch 的 `arms=true, head=false` 一致。启用同步时也接受包含配置集合的完整单帧，但不接受多余或不完整的未知分组；关闭同步时保留完整 29/31/N 帧的原有行为。
+
+启动期间保持等待，直到收到完整、新鲜的配对，再执行两阶段 reset；IMU 启动检查不变。运行期间一侧断流或持续无法配对，超时后通过现有控制调度器故障路径停止控制器和命令发布，日志明确标为 **joint feedback synchronization timeout**，不伪装成 IMU 故障。停止发布不等价于硬件已失能，分体驱动的命令 watchdog/失能策略仍需独立验证；关节数据配对也不代表驱动已完成使能。
+
+离线回归：`python3 -m pytest -q src/bxi_example_py_elf3/test/test_synchronization.py src/bxi_example_py_elf3/test/test_joint_state_sync.py`（加载 ROS 与本包环境，不启动硬件）。模型、动作、normal 双臂 PD 覆盖和仿真 actuator 均不受此同步改动影响。
+
 ### 控制性能与整机 CPU 统计
 
 `control_runtime` 的性能日志采用以下口径（硬件与仿真共用）：

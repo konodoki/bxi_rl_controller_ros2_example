@@ -39,6 +39,7 @@ from bxi_example_py_elf3.framework.joints import (
 from bxi_example_py_elf3.framework.mod_api import MotorFrame
 from bxi_example_py_elf3.imu_freshness import ImuStampObserver
 from bxi_example_py_elf3.imu_diagnostics import ImuReceiveDiagnostics
+from bxi_example_py_elf3.framework.platform.joint_sync import SynchronizedJointStateSource
 from bxi_example_py_elf3.framework.platform.status import CachedGraphStatusEncoder
 from bxi_example_py_elf3.framework.platform import (
     NamedJointStateSource,
@@ -142,9 +143,33 @@ class BxiExample(Node):
         self._next_imu_startup_warning = 0.0
         self.raw_cmd_vel = np.zeros(3, dtype=np.float32)
         self.pending_remote_events = deque()
-        self._joint_source = NamedJointStateSource(dtype=np.float64)
+        self._joint_source = (
+            SynchronizedJointStateSource(
+                self._joint_sync_lower, self._joint_sync_upper,
+                policy=self.joint_sync_policy,
+                slop_sec=self.joint_sync_slop_sec,
+                queue_size=self.joint_sync_queue_size,
+                timeout_sec=self.joint_sync_timeout_sec,
+                use_header_stamp=self.joint_sync_use_header_stamp,
+            ) if self.joint_state_sync else NamedJointStateSource(dtype=np.float64)
+        )
+        if self.joint_state_sync:
+            self.get_logger().info(
+                "joint feedback synchronizer: "
+                f"groups={self._joint_sync_lower.dof_num}+{self._joint_sync_upper.dof_num}, "
+                f"policy={self.joint_sync_policy}, "
+                f"approximate_slop={self.joint_sync_slop_sec:.3f}s, queue={self.joint_sync_queue_size}, "
+                f"timeout={self.joint_sync_timeout_sec:.3f}s, "
+                f"stamp_source={'header' if self.joint_sync_use_header_stamp else 'receipt'}"
+            )
+        if self.joint_state_sync and self.joint_sync_policy == "queue":
+            self.get_logger().warning(
+                "joint sync uses FIFO arrival order, NOT timestamp synchronization; "
+                "lower/upper samples may represent different device times"
+            )
         self._joint_received = False
-        self._bad_joint_state_warned = False
+        self._next_bad_joint_state_warning = 0.0
+        self._next_joint_startup_info = 0.0
         self._joint_snapshot: JointStateBuffer | None = None
         self._quat_xyzw_snapshot = np.zeros(4, dtype=np.float64)
         self._quat_wxyz_snapshot = np.zeros(4, dtype=np.float64)
@@ -224,6 +249,35 @@ class BxiExample(Node):
             self.get_parameter("/imu_protection_allow_release").value
         )
 
+        # Only split hardware opts in. Full-frame hardware/simulation keep
+        # their original 29/31/N first-message layout behavior.
+        self.declare_parameter("/joint_state_sync", False)
+        self.joint_state_sync = bool(self.get_parameter("/joint_state_sync").value)
+        self.declare_parameter("/joint_sync_policy", "approximate")
+        self.joint_sync_policy = self.get_parameter("/joint_sync_policy").value
+        self.declare_parameter("/joint_sync_slop_sec", 0.02)
+        self.declare_parameter("/joint_sync_queue_size", 8)
+        self.declare_parameter("/joint_sync_timeout_sec", 1.0)
+        self.declare_parameter("/joint_sync_use_header_stamp", True)
+        self.joint_sync_slop_sec = float(self.get_parameter("/joint_sync_slop_sec").value)
+        self.joint_sync_queue_size = self.get_parameter("/joint_sync_queue_size").value
+        self.joint_sync_timeout_sec = float(self.get_parameter("/joint_sync_timeout_sec").value)
+        self.joint_sync_use_header_stamp = bool(self.get_parameter("/joint_sync_use_header_stamp").value)
+        default_lower = tuple(
+            name for name in ELF3_RESET_JOINTS.names
+            if name.startswith("waist_") or any(part in name for part in ("_hip_", "_knee_", "_ankle_"))
+        )
+        default_upper = tuple(
+            name for name in ELF3_RESET_JOINTS.names
+            if name not in default_lower and not name.startswith("head_")
+        )
+        self.declare_parameter("/joint_sync_lower_names", list(default_lower))
+        self.declare_parameter("/joint_sync_upper_names", list(default_upper))
+        self._joint_sync_lower = JointLayout.create(
+            self.get_parameter("/joint_sync_lower_names").value, label="lower body feedback")
+        self._joint_sync_upper = JointLayout.create(
+            self.get_parameter("/joint_sync_upper_names").value, label="upper body feedback")
+
         self.motor_override_topic = self.topic_prefix + "actuators_cmds_override"
         self.motor_override_timeout_sec = 0.2
         self.motor_override_release_blend_sec = 0.2
@@ -281,11 +335,15 @@ class BxiExample(Node):
             qos,
             callback_group=self.io_callback_group,
         )
+        joint_qos = QoSProfile(
+            depth=2 * self.joint_sync_queue_size if self.joint_state_sync else 1,
+            durability=qos.durability, reliability=qos.reliability,
+        )
         self.actuator_sub = self.create_subscription(
             bxiMsg.ActuatorStates,
             self.topic_prefix + "actuator_states",
             self._imu_diagnostics.wrap("joints", self.actuator_callback),
-            qos,
+            joint_qos,
             callback_group=self.io_callback_group,
         )
         self.imu_sub = self.create_subscription(
@@ -362,6 +420,18 @@ class BxiExample(Node):
                 )
                 self._next_imu_startup_warning = now + 2.0
             return False
+        if self.step < 2 and isinstance(self._joint_source, SynchronizedJointStateSource):
+            with self.lock_in:
+                joints_ready = self._joint_source.is_fresh(now)
+                diagnostic = None if joints_ready else self._joint_source.diagnostics(now)
+            if not joints_ready:
+                if now >= self._next_joint_startup_info:
+                    self._next_joint_startup_info = now + 2.0
+                    self.get_logger().info(
+                        "waiting for synchronized lower/upper joint feedback before control startup: "
+                        f"{diagnostic}"
+                    )
+                return False
         if self.step == 0:
             if self.robot_reset(1, False):
                 self.get_logger().info("robot reset step 1 requested")
@@ -390,6 +460,11 @@ class BxiExample(Node):
         """Copy the latest ROS inputs into one coherent framework observation."""
         self._check_imu_runtime_safety()
         with self.lock_in:
+            if (isinstance(self._joint_source, SynchronizedJointStateSource)
+                    and not self._shutting_down.is_set() and self.context.ok()):
+                # A live lower publisher cannot hide a stopped upper publisher.
+                # Expected shutdown must not generate a derived sync failure.
+                self._joint_source.require_fresh()
             latest_joints = self._joint_source.view
             if self._joint_snapshot is None:
                 self._joint_snapshot = JointStateBuffer(
@@ -590,33 +665,43 @@ class BxiExample(Node):
         self.sim_rest_srv.call_async(req)
 
     def joint_callback(self, msg):
-        self._update_joint_state(msg.name, msg.position, msg.velocity)
+        self._update_joint_state(
+            msg.name, msg.position, msg.velocity,
+            timestamp_ns=msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec,
+        )
 
     def actuator_callback(self, msg):
-        self._update_joint_state(msg.name, msg.position, msg.velocity)
+        self._update_joint_state(
+            msg.name, msg.position, msg.velocity,
+            timestamp_ns=msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec,
+        )
 
-    def _update_joint_state(self, names, position, velocity):
+    def _update_joint_state(self, names, position, velocity, *, timestamp_ns=0):
         with self.lock_in:
             try:
                 latest = self._joint_source.update(
                     names,
                     position,
                     velocity,
-                    timestamp_ns=self.get_clock().now().nanoseconds,
+                    timestamp_ns=(timestamp_ns if self.joint_state_sync
+                                  else self.get_clock().now().nanoseconds),
                 )
-            except (TypeError, ValueError) as exc:
-                if not self._bad_joint_state_warned:
+            except (TypeError, ValueError, OverflowError) as exc:
+                # Valid body frames must not reset the invalid-frame throttle.
+                now = time.monotonic()
+                if now >= self._next_bad_joint_state_warning:
+                    self._next_bad_joint_state_warning = now + 5.0
                     self.get_logger().error(f"invalid named joint state: {exc}")
-                    self._bad_joint_state_warned = True
                 return
 
+            if latest is None:
+                return  # Valid half-frame queued, but no synchronized pair yet.
             if not self._joint_received:
+                origin = "synchronized lower/upper feedback" if self.joint_state_sync else "message names"
                 self.get_logger().info(
-                    "ELF3 state layout initialized from message names: "
-                    f"{latest.layout.dof_num} joints"
+                    f"ELF3 state layout initialized from {origin}: {latest.layout.dof_num} joints"
                 )
             self._joint_received = True
-            self._bad_joint_state_warned = False
 
     def joy_callback(self, msg):
         events = self.runtime.extract_remote_events(msg, sync_only=self.step < 2)

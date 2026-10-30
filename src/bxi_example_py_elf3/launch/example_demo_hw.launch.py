@@ -2,7 +2,6 @@ import atexit
 import fcntl
 import os
 import sys
-
 from ament_index_python.packages import get_package_share_path
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
@@ -10,6 +9,7 @@ from launch.substitutions import LaunchConfiguration
 from launch.actions import IncludeLaunchDescription, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from bxi_example_py_elf3.framework.mod_api.hardware_launch import (
     declare_hardware_launch_arguments,
     hardware_node_from_context,
@@ -88,7 +88,6 @@ def _acquire_lock():
     _lock_fd = fd
     atexit.register(_release_lock)
 
-
 def generate_launch_description():
     _acquire_lock()
 
@@ -100,6 +99,14 @@ def generate_launch_description():
         get_package_share_path("bxi_depth_camera"),
         "launch/cameras.launch.py",
     )
+    dual_robot_launch = os.path.join(
+        get_package_share_path("hardware_kaixuan_arms"),
+        "launch/dual_robot.launch.py",
+    )
+    imu_launch = os.path.join(
+        get_package_share_path("bxi_imu"),
+        "launch/imu.launch.py",
+    )
 
     return LaunchDescription(
         declare_hardware_launch_arguments()
@@ -109,11 +116,40 @@ def generate_launch_description():
                 default_value="1.0",
                 description="Seconds without IMU data before locked protection",
             ),
+            DeclareLaunchArgument(
+                "imu_reader_priority",
+                default_value="20",
+                description="Scheduling priority for the IMU reader",
+            ),
+            DeclareLaunchArgument("joint_state_sync", default_value="true",
+                                  description="Synchronize split lower/upper feedback"),
+            DeclareLaunchArgument("joint_sync_policy", default_value="approximate",
+                                  choices=["approximate", "exact", "time", "queue"],
+                                  description="TimeSynchronizer is exact; queue is explicit FIFO, not time sync"),
+            DeclareLaunchArgument("joint_sync_slop_sec", default_value="0.02",
+                                  description="Maximum lower/upper timestamp difference"),
+            DeclareLaunchArgument("joint_sync_queue_size", default_value="8",
+                                  description="Bounded samples per joint group (1-64)"),
+            DeclareLaunchArgument("joint_sync_timeout_sec", default_value="1.0",
+                                  description="Maximum receive age of a complete pair"),
+            DeclareLaunchArgument("joint_sync_use_header_stamp", default_value="true",
+                                  description="Use shared-clock header stamps; false uses receipt time only"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(cameras_launch),
             ),
-            OpaqueFunction(
-                function=lambda context: [hardware_node_from_context(context)]
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(dual_robot_launch),
+                launch_arguments={
+                    "arms": "true",
+                    "head": "false",
+                    # 如需 hardware_elf3 内部也启用 IMU 参数，再加 "imu": "true"
+                }.items(),
+            ),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(imu_launch),
+                launch_arguments={
+                    "imu_reader_priority": LaunchConfiguration("imu_reader_priority"),
+                }.items(),
             ),
             Node(
                 package="bxi_example_py_elf3",
@@ -122,6 +158,18 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     {"/topic_prefix": "hardware/"},
+                    # Both split drivers publish on hardware/actuator_states.
+                    {
+                        "/" + name: ParameterValue(LaunchConfiguration(name), value_type=value_type)
+                        for name, value_type in (
+                            ("joint_state_sync", bool),
+                            ("joint_sync_policy", str),
+                            ("joint_sync_slop_sec", float),
+                            ("joint_sync_queue_size", int),
+                            ("joint_sync_timeout_sec", float),
+                            ("joint_sync_use_header_stamp", bool),
+                        )
+                    },
                     {"/state_machine_config": state_machine_config},
                     {
                         "/imu_runtime_timeout_sec": LaunchConfiguration(

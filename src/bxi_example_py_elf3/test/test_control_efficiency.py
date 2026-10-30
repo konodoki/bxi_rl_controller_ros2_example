@@ -135,9 +135,11 @@ def test_remote_edge_order_and_startup_sync_are_preserved():
     assert events == ["activate", "activate", "brake"]
 
 
-def test_remote_subscriptions_do_not_share_sensor_callback_group(demo_class):
+@pytest.mark.parametrize("joint_state_sync", [False, True])
+def test_remote_subscriptions_do_not_share_sensor_callback_group(demo_class, joint_state_sync):
     node = Mock(
         topic_prefix="hardware/", state_machine_info_topic="",
+        joint_state_sync=joint_state_sync, joint_sync_queue_size=8,
         motor_override_topic="hardware/actuators_cmds_override",
         motor_override_timeout_sec=0.2, motor_override_release_blend_sec=0.2,
         motor_override_allow_in_zero_torque=False,
@@ -152,6 +154,9 @@ def test_remote_subscriptions_do_not_share_sensor_callback_group(demo_class):
     assert groups["motion_commands"] is node.remote_callback_group
     assert groups["hardware/actuators_cmds_override"] is node.remote_callback_group
     assert node.io_callback_group is not node.remote_callback_group
+    qos_by_topic = {c.args[1]: c.args[3] for c in node.create_subscription.call_args_list}
+    assert qos_by_topic["hardware/actuator_states"].depth == (16 if joint_state_sync else 1)
+    assert qos_by_topic["hardware/imu_data"].depth == 1
 
 
 def test_graph_is_encoded_once_but_present_in_every_message():

@@ -11,10 +11,24 @@ if TYPE_CHECKING:
         NamedJointCommandEncoder,
         NamedJointStateSource,
     )
+    from .synchronization import (
+        ApproximateTimeSynchronizer, ExactTimeSynchronizer, TimeSynchronizer,
+        QueueSynchronizer, SynchronizedSample, SynchronizationResult,
+    )
+    from .joint_sync import SynchronizedJointStateSource
     from .runtime import ControlRuntimeConfig, RobotControlRuntime
 
 
 def __getattr__(name: str):
+    if name in {
+        "ApproximateTimeSynchronizer", "ExactTimeSynchronizer", "TimeSynchronizer",
+        "QueueSynchronizer", "SynchronizedSample", "SynchronizationResult",
+    }:
+        from . import synchronization
+        return getattr(synchronization, name)
+    if name == "SynchronizedJointStateSource":
+        from .joint_sync import SynchronizedJointStateSource
+        return SynchronizedJointStateSource
     if name in {"ControlPlatformAdapter", "RobotObservation"}:
         from .api import ControlPlatformAdapter, RobotObservation
 
@@ -62,4 +76,11 @@ __all__ = [
     "NamedJointStateSource",
     "RobotControlRuntime",
     "RobotObservation",
+    "SynchronizedJointStateSource",
+    "ApproximateTimeSynchronizer",
+    "ExactTimeSynchronizer",
+    "TimeSynchronizer",
+    "QueueSynchronizer",
+    "SynchronizedSample",
+    "SynchronizationResult",
 ]
